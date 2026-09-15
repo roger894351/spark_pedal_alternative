@@ -1,14 +1,15 @@
 import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, SparkReader, describe, hex,
-} from "./spark-protocol.js?v=3";
+} from "./spark-protocol.js?v=4";
 import {
-  encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff,
+  encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=3";
-import * as library from "./library.js?v=3";
+} from "./spark-preset.js?v=4";
+import * as library from "./library.js?v=4";
+import { FX_BY_SLOT, paramLabel, displayName } from "./fx-catalog.js?v=4";
 
-const APP_VERSION = "v3";
+const APP_VERSION = "v4";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -24,6 +25,7 @@ const KEYMAP = {
   BracketLeft: { bank: -1 }, BracketRight: { bank: 1 },
   Minus: { volume: -0.05 }, NumpadSubtract: { volume: -0.05 },
   Equal: { volume: 0.05 }, NumpadAdd: { volume: 0.05 },
+  Digit0: { revert: true }, Numpad0: { revert: true },
 };
 
 const CONNECT_HINTS = {
@@ -43,7 +45,7 @@ const ui = {
   modeAmp: $("mode-amp"), modeLibrary: $("mode-library"),
   bankRow: $("bank-row"), bankLabel: $("bank-label"),
   bankPrev: $("bank-prev"), bankNext: $("bank-next"),
-  tonePanel: $("tone-panel"), toneName: $("tone-name"),
+  tonePanel: $("tone-panel"), toneName: $("tone-name"), revert: $("revert"),
   sliders: $("sliders"), effects: $("effects"),
   libCount: $("lib-count"), libList: $("lib-list"),
   saveTone: $("save-tone"), importFile: $("import-file"), exportLib: $("export-lib"),
@@ -57,7 +59,9 @@ const state = {
   bank: 0,
   tones: library.load(),
   tone: null, // the tone currently loaded on the amp, as reported by it
+  baseline: null, // that tone as first loaded, for "undo my changes"
   msgNum: 0, ackTimer: null, wakeLock: null, sliderTimer: null,
+  openSlots: new Set(),
 };
 
 const reader = new SparkReader();
@@ -149,9 +153,48 @@ function setMode(mode) {
 
 // ---------- tone parameters (volume / EQ / effects) ----------
 
-function setTone(tone) {
+function setTone(tone, { keepBaseline = false } = {}) {
   state.tone = tone;
+  if (!keepBaseline) state.baseline = structuredClone(tone);
   renderTone();
+}
+
+// Undo every change made since the tone was loaded, sending only what actually differs.
+function revertTone() {
+  const base = state.baseline;
+  const tone = state.tone;
+  if (!base || !tone) return;
+  let changes = 0;
+  base.pedals.forEach((basePedal, i) => {
+    const pedal = tone.pedals[i];
+    if (pedal.name !== basePedal.name) {
+      send(changeEffect(pedal.name, basePedal.name, nextMsgNum()), `${SLOT_LABELS[i]} → ${basePedal.name}`);
+      changes++;
+    }
+    basePedal.parameters.forEach((value, p) => {
+      if (pedal.parameters[p] !== value) {
+        send(changeEffectParameter(basePedal.name, p, value, nextMsgNum()), `${basePedal.name} p${p}=${value.toFixed(2)}`);
+        changes++;
+      }
+    });
+    if (pedal.isOn !== basePedal.isOn) {
+      send(turnEffectOnOff(basePedal.name, basePedal.isOn, nextMsgNum()), `${basePedal.name} ${basePedal.isOn ? "on" : "off"}`);
+      changes++;
+    }
+  });
+  state.tone = structuredClone(base);
+  renderTone();
+  log(changes ? `reverted ${changes} change(s)` : "nothing to revert");
+}
+
+function swapEffect(slotIndex, newName) {
+  const pedal = state.tone?.pedals?.[slotIndex];
+  if (!pedal || pedal.name === newName) return;
+  send(changeEffect(pedal.name, newName, nextMsgNum()), `${SLOT_LABELS[slotIndex]} → ${newName}`);
+  pedal.name = newName;
+  renderTone();
+  // The amp loads that effect's own settings, so ask for the tone again.
+  setTimeout(() => send(getCurrentPreset(-1, nextMsgNum()), "get tone"), 400);
 }
 
 const ampPedal = () => state.tone?.pedals?.[AMP_SLOT] ?? null;
@@ -248,20 +291,88 @@ function renderTone() {
         const v = Number(input.value);
         out.textContent = Math.round(v * 100);
         sendParameter(AMP_SLOT, index, v);
+        ui.revert.hidden = !hasChanges();
       });
       ui.sliders.append(row);
     }
   }
 
+  ui.revert.hidden = !hasChanges();
+
   ui.effects.innerHTML = "";
-  tone.pedals.forEach((pedal, i) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = `fx${pedal.isOn ? " on" : ""}`;
-    btn.innerHTML = `<span class="fx-label">${SLOT_LABELS[i]}</span><span class="fx-name">${escapeHtml(pedal.name)}</span>`;
-    btn.addEventListener("click", () => toggleEffect(i));
-    ui.effects.append(btn);
+  tone.pedals.forEach((pedal, i) => ui.effects.append(effectRow(pedal, i)));
+}
+
+function hasChanges() {
+  const base = state.baseline;
+  const tone = state.tone;
+  if (!base || !tone) return false;
+  return base.pedals.some((basePedal, i) => {
+    const pedal = tone.pedals[i];
+    return pedal.name !== basePedal.name || pedal.isOn !== basePedal.isOn
+      || basePedal.parameters.some((v, p) => pedal.parameters[p] !== v);
   });
+}
+
+// One collapsible row per effect slot: on/off, model picker and that effect's knobs.
+function effectRow(pedal, slotIndex) {
+  const row = document.createElement("details");
+  row.className = "fx-slot";
+  row.open = state.openSlots.has(slotIndex);
+  row.addEventListener("toggle", () => {
+    row.open ? state.openSlots.add(slotIndex) : state.openSlots.delete(slotIndex);
+  });
+
+  const summary = document.createElement("summary");
+  summary.innerHTML = `<span class="fx-label">${SLOT_LABELS[slotIndex]}</span>
+    <span class="fx-name">${escapeHtml(displayName(pedal.name))}</span>`;
+  const power = document.createElement("button");
+  power.type = "button";
+  power.className = `power${pedal.isOn ? " on" : ""}`;
+  power.textContent = pedal.isOn ? "ON" : "OFF";
+  power.addEventListener("click", (e) => {
+    e.preventDefault(); // don't open/close the row
+    e.stopPropagation();
+    toggleEffect(slotIndex);
+  });
+  summary.append(power);
+  row.append(summary);
+
+  const body = document.createElement("div");
+  body.className = "fx-body";
+
+  const options = FX_BY_SLOT[slotIndex] ?? [];
+  if (options.length > 1) {
+    const picker = document.createElement("select");
+    const known = options.some((o) => o.tech === pedal.name);
+    if (!known) picker.append(new Option(pedal.name, pedal.name, true, true));
+    for (const opt of options) picker.append(new Option(opt.app, opt.tech, false, opt.tech === pedal.name));
+    picker.addEventListener("change", () => swapEffect(slotIndex, picker.value));
+    body.append(picker);
+  }
+
+  pedal.parameters.forEach((value, p) => {
+    body.append(parameterSlider(pedal.name, slotIndex, p, value));
+  });
+  row.append(body);
+  return row;
+}
+
+function parameterSlider(effectName, slotIndex, param, value) {
+  const row = document.createElement("label");
+  row.className = "slider";
+  row.innerHTML = `<span>${escapeHtml(paramLabel(effectName, param))}</span>
+    <input type="range" min="0" max="1" step="0.01" value="${value}">
+    <output>${Math.round(value * 100)}</output>`;
+  const input = row.querySelector("input");
+  const out = row.querySelector("output");
+  input.addEventListener("input", () => {
+    const v = Number(input.value);
+    out.textContent = Math.round(v * 100);
+    sendParameter(slotIndex, param, v);
+    ui.revert.hidden = !hasChanges();
+  });
+  return row;
 }
 
 // ---------- bluetooth ----------
@@ -398,6 +509,7 @@ document.addEventListener("keydown", (e) => {
   else if (action.step) stepSlot(action.step);
   else if (action.bank) stepBank(action.bank);
   else if (action.volume) nudgeVolume(action.volume);
+  else if (action.revert) revertTone();
 });
 
 ui.connect.addEventListener("click", () => {
@@ -407,6 +519,7 @@ ui.connect.addEventListener("click", () => {
 ui.connectAll.addEventListener("click", () => { if (!state.connected) connect({ allDevices: true }); });
 ui.modeAmp.addEventListener("click", () => setMode("amp"));
 ui.modeLibrary.addEventListener("click", () => setMode("library"));
+ui.revert.addEventListener("click", revertTone);
 ui.bankPrev.addEventListener("click", () => stepBank(-1));
 ui.bankNext.addEventListener("click", () => stepBank(1));
 
@@ -493,6 +606,7 @@ render();
 if (new URLSearchParams(location.search).has("demo")) {
   state.connected = true;
   state.activeSlot = 2;
+  state.openSlots.add(2);
   setStatus("connected", "Connected: Spark 40 BLE (demo)");
   setTone({
     name: "Ac Dc", pedals: [

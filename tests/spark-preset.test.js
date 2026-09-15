@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { SparkReader, describe, hex } from "../web/spark-protocol.js";
 import {
-  encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff,
+  encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   AMP_PARAM, internals,
 } from "../web/spark-preset.js";
 
@@ -128,4 +128,14 @@ test("reader joins tone chunks arriving from the amp in 25-byte pieces", () => {
   }
   assert.equal(out.length, 1);
   assert.equal(decodePreset(out[0].data).name, "Ac Dc");
+});
+
+test("change effect model sends both technical names", () => {
+  const [block] = changeEffect("Booster", "Fuzz", 6);
+  const [msg] = payloadFromBlocks([block]);
+  assert.equal(msg.subCmd, 0x06);
+  assert.deepEqual(msg.data.slice(0, 2), [7, 0xa7]);
+  assert.equal(String.fromCharCode(...msg.data.slice(2, 9)), "Booster");
+  assert.deepEqual(msg.data.slice(9, 11), [4, 0xa4]);
+  assert.equal(String.fromCharCode(...msg.data.slice(11)), "Fuzz");
 });

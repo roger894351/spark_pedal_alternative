@@ -124,6 +124,10 @@ export const getCurrentPreset = (hwPreset = -1, msgNum) =>
 export const changeEffectParameter = (effectName, param, value, msgNum) =>
   buildMessage(0x01, 0x04, [...encPrefixedString(effectName), param, ...encFloat(value)], msgNum);
 
+// Swap the effect in a slot, e.g. ("Booster", "Fuzz"). The amp loads that effect's own settings.
+export const changeEffect = (oldName, newName, msgNum) =>
+  buildMessage(0x01, 0x06, [...encPrefixedString(oldName), ...encPrefixedString(newName)], msgNum);
+
 export const turnEffectOnOff = (effectName, on, msgNum) =>
   buildMessage(0x01, 0x15, [...encPrefixedString(effectName), ...encOnOff(on), 0x00], msgNum);
 
