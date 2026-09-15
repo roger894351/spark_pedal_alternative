@@ -160,7 +160,7 @@ Two ways to do it:
 - [ ] Phase 0 / first real-amp test (Mac Chrome, then iPhone Bluefy)
 - [ ] Host on GitHub Pages for iPhone use
 - [ ] Phase 2 custom tones (optional)
-- [ ] Phase 3 ESP32 pedal (optional)
+- [ ] Phase 3 ESP32 pedal – design guide in ESP32_CONTROLLER.md, waiting on hardware decisions
 
 ## 7. References
 - Ignitron (ESP32 Spark pedal): https://github.com/stangreg/Ignitron
