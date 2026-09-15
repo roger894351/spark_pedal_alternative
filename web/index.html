@@ -19,6 +19,7 @@
       --bad: #ef5b5b;
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html, body { height: 100%; }
     body {
       margin: 0;
@@ -67,6 +68,28 @@
       color: var(--text); background: rgba(245, 197, 66, .08); user-select: text;
     }
     #version { opacity: .6; }
+    .modes { display: flex; gap: 8px; }
+    .modes button { padding: 8px 14px; font-size: 14px; }
+    .modes button.selected { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
+    #bank-row { display: flex; align-items: center; justify-content: center; gap: 16px; }
+    #bank-row button { padding: 8px 18px; font-size: 18px; }
+    #bank-label { font-size: 14px; color: var(--muted); min-width: 110px; text-align: center; }
+    .preset .key { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px; }
+    #tone-panel { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+    #tone-panel h2 { font-size: 15px; margin: 0 0 10px; display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+    #tone-name { color: var(--accent); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .slider { display: grid; grid-template-columns: 70px 1fr 34px; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 13px; color: var(--muted); }
+    .slider input { width: 100%; accent-color: var(--accent); }
+    .slider output { text-align: right; font: 12px ui-monospace, Menlo, monospace; color: var(--text); }
+    #effects { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .fx { display: flex; flex-direction: column; align-items: flex-start; padding: 6px 10px; font-size: 12px; opacity: .55; }
+    .fx.on { opacity: 1; border-color: var(--accent); }
+    .fx-label { color: var(--muted); font-size: 11px; }
+    .fx-name { font-size: 12px; }
+    #lib-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 180px; overflow: auto; }
+    #lib-list li { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+    .lib-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 8px; }
+    .lib-actions input[type=file] { font-size: 12px; color: var(--muted); max-width: 100%; }
 
     .grid {
       flex: 1;
@@ -128,6 +151,17 @@
       <p>Mac/PC/Android: use <strong>Google Chrome</strong>.</p>
     </div>
 
+    <div class="modes">
+      <button id="mode-amp" class="selected" type="button">Amp presets 1–4</button>
+      <button id="mode-library" type="button">My tones</button>
+    </div>
+
+    <div id="bank-row" hidden>
+      <button id="bank-prev" type="button">‹</button>
+      <span id="bank-label">Bank 1 / 1</span>
+      <button id="bank-next" type="button">›</button>
+    </div>
+
     <section class="grid">
       <button class="preset" type="button" data-preset="1"><span class="num">1</span><span class="key">key 1</span></button>
       <button class="preset" type="button" data-preset="2"><span class="num">2</span><span class="key">key 2</span></button>
@@ -135,10 +169,27 @@
       <button class="preset" type="button" data-preset="4"><span class="num">4</span><span class="key">key 4</span></button>
     </section>
 
+    <section id="tone-panel" hidden>
+      <h2>Tone: <span id="tone-name"></span></h2>
+      <div id="sliders"></div>
+      <div id="effects"></div>
+    </section>
+
+    <details>
+      <summary>My tones (<span id="lib-count">0 tones</span>)</summary>
+      <ul id="lib-list"></ul>
+      <div class="lib-actions">
+        <button id="save-tone" class="link" type="button">Save current tone</button>
+        <button id="export-lib" class="link" type="button">Export (copy JSON)</button>
+        <input id="import-file" type="file" accept=".json,application/json" multiple>
+      </div>
+    </details>
+
     <p class="help">
       Keyboard: <kbd>1</kbd>–<kbd>4</kbd> select preset ·
       <kbd>←</kbd>/<kbd>↑</kbd>/<kbd>PgUp</kbd> previous ·
-      <kbd>→</kbd>/<kbd>↓</kbd>/<kbd>PgDn</kbd> next.
+      <kbd>→</kbd>/<kbd>↓</kbd>/<kbd>PgDn</kbd> next ·
+      <kbd>[</kbd>/<kbd>]</kbd> bank · <kbd>-</kbd>/<kbd>=</kbd> volume.
       Close the official Spark app first – and this page on any other device (e.g. your Mac) –
       the amp allows only one control connection.
     </p>
@@ -149,6 +200,6 @@
       <pre id="log"></pre>
     </details>
   </main>
-  <script type="module" src="app.js?v=2"></script>
+  <script type="module" src="app.js?v=3"></script>
 </body>
 </html>

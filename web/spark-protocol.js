@@ -79,6 +79,7 @@ export class SparkReader {
   constructor() {
     this.blockBuf = [];
     this.chunkBuf = [];
+    this.partial = [];
   }
 
   push(bytes) {
@@ -118,9 +119,25 @@ export class SparkReader {
       if (end === -1) { this.chunkBuf = buf.slice(start); return messages; }
       const [, , msgNum, , cmd, subCmd] = buf.slice(start, start + 6);
       const data = from7Bit(buf.slice(start + 6, end));
-      messages.push({ msgNum, cmd, subCmd, data });
       this.chunkBuf = buf.slice(end + 1);
+      const joined = this.#joinMultiChunk(cmd, subCmd, data);
+      if (joined) messages.push({ msgNum, cmd, subCmd, data: joined });
     }
+  }
+
+  // Full tones (cmd 01/03, sub 01) are split over several chunks, each carrying
+  // a (chunk count, chunk index, length) sub-header. Returns null until the last one.
+  #joinMultiChunk(cmd, subCmd, data) {
+    const isToneChunk = (cmd === 0x01 || cmd === 0x03) && subCmd === 0x01
+      && data.length > 3 && data[0] >= 1 && data[1] < data[0] && data[2] === data.length - 3;
+    if (!isToneChunk) return data;
+    const [count, index] = data;
+    if (index === 0) this.partial = [];
+    this.partial.push(...data.slice(3));
+    if (index !== count - 1) return null;
+    const complete = this.partial;
+    this.partial = [];
+    return complete;
   }
 }
 
@@ -132,6 +149,7 @@ export function describe(msg) {
     const index = data[1];
     return { type: "preset", preset: index !== undefined && index < 4 ? index + 1 : null };
   }
+  if ((cmd === 0x01 || cmd === 0x03) && subCmd === 0x01) return { type: "tone", data };
   if (cmd === 0x04) return { type: "ack", subCmd };
   return null;
 }
