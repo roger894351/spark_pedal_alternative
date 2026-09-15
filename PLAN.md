@@ -157,10 +157,10 @@ Two ways to do it:
 
 ## 6. Status
 - [x] Phase 1 MVP built: `web/` (UI, BLE connection, key map, auto-reconnect, wake lock) + `tests/` (encoder verified against known packets)
-- [ ] Phase 0 / first real-amp test (Mac Chrome, then iPhone Bluefy)
-- [ ] Host on GitHub Pages for iPhone use
+- [x] Real-amp test: works on Mac Chrome and iPhone (Bluefy, v2) – confirmed 2026-09-15
+- [x] Hosted on GitHub Pages: https://roger894351.github.io/spark_pedal_alternative/
 - [ ] Phase 2 custom tones (optional)
-- [ ] Phase 3 ESP32 pedal – build spec v1 in ESP32_CONTROLLER.md (6 switches, 1.3" OLED, 18650, knob + EXP jack, ~$50); waiting on tools/shop/LED choices
+- [ ] Phase 3 ESP32 pedal – build spec v2 in ESP32_CONTROLLER.md (Ignitron + 3D-printed case, no drilling, USB power bank, keyboard mode for Anki); next: order parts
 
 ## 7. References
 - Ignitron (ESP32 Spark pedal): https://github.com/stangreg/Ignitron
