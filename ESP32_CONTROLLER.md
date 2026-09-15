@@ -1,84 +1,157 @@
-# Versatile ESP32 Spark Controller – Design Guide
+# ESP32 Spark 40 Controller – Build Spec v1
 
-A phone-free foot controller for the Spark 40 that goes beyond Spark Control. It adds unlimited tone banks, effect on/off switches, volume/expression control, a tuner, and control of phone apps such as a looper.
+**Target:** a battery-powered foot controller with a display. It gives you far more than 4 tones, and you design the tones in the Spark app.
+**Budget:** about $50 in parts, well under the ~$200 Positive Grid pedal.
 
-## 1. What is an ESP32?
-A small, cheap microcontroller board (about 5 × 2.5 cm, $6–10) with **Bluetooth LE + Wi-Fi built in**. You program it from your Mac over USB.
+---
 
-It can:
-- Talk to the Spark 40 the same way the Spark app does.
-- Read footswitches, knobs and expression pedals.
-- Drive a small display and LEDs.
-- Pretend to be a Bluetooth keyboard or MIDI device, to control phone apps.
+## 1. Answers to the key questions
 
-## 2. Feature menu
-Pick what you want. Everything here can run on one ESP32.
+### "The Spark 40 only has 4 presets – can we get more?"
+Yes. The amp stores 4 tones, but the pedal can **store hundreds of tones itself**. When you press a switch, it sends the complete tone (amp model, effects, settings) to the amp. That is what the Spark app does.
 
-| # | Feature | What it does | Needs |
-|---|---|---|---|
-| A | **Preset banks** | 4 switches = 4 tones, 2 switches = bank up/down. Hundreds of tones stored on the ESP32 and sent to the amp. The amp's own 4 presets stay untouched. | 6 footswitches |
-| B | **FX mode** | Switches toggle Noise Gate / Comp / Drive / Mod / Delay / Reverb in the current tone | same switches, long-press to change mode |
-| C | **Volume** | Up/down switches, or a knob, set the tone's **Master** level (amp block parameter 4, value 0.0–1.0) | 2 switches or a $1 knob |
-| D | **Expression pedal** | Smooth control of volume, wah, gain or delay mix | 1–2 TRS jacks + expression pedal(s) |
-| E | **Tuner** | Turns on the amp's tuner and shows the note on the display | display |
-| F | **Phone app control** | Acts as a Bluetooth keyboard/MIDI device for a looper, backing tracks or sheet-music page turning | nothing extra |
-| G | **Wi-Fi setup page** | Change button mapping, banks and tones from your phone's browser; no reprogramming | nothing extra |
-| H | **Display + LEDs** | Shows bank, tone name and volume; LEDs show the active tone or effect | OLED + LED strip |
-| I | **Battery** | Runs wireless for about 10–15 h per charge | 18650 cell + charger board |
+Tones are grouped in **banks of 4**:
+- 4 switches pick a tone.
+- 2 switches go to the previous/next bank.
 
-**Can't do:** turn the amp's *physical* Master knob. Volume control changes the level inside the tone. In practice that works the same way.
+The amp's own 4 presets stay unchanged. The open-source **Ignitron** firmware already does this, and it comes with 94 tones.
 
-## 3. Recommended hardware ("versatile" build, about $60–80)
+### "Should we move the Spark app to an ESP32 or a Raspberry Pi?"
+The ESP32 is the better fit here:
 
-| Part | Recommended | Qty | ~Cost | Notes |
-|---|---|---|---|---|
-| Controller | **ESP32-WROOM-32 DevKit V1** (38-pin, USB-C if available) | 1 (buy 2) | $8 | Same chip as Ignitron and SparkBox. Avoid ESP32-C3 and S2 variants. |
-| Screw-terminal breakout for the DevKit | 38-pin "ESP32 expansion board" | 1 | $5 | Lets you wire with a screwdriver instead of soldering |
-| Footswitches | **Momentary** soft-touch SPST (*not* latching) | 6 (or 8) | $15 | Latching switches won't work well |
-| Expression jacks | 6.35 mm (1/4") **TRS** stereo jack | 2 | $3 | Tip = wiper; powered from **3.3 V**, not 5 V |
-| Volume knob (optional) | 10 kΩ linear potentiometer + knob | 1 | $2 | |
-| Display | 1.3" OLED **SH1106** I²C (or 0.96" SSD1306) | 1 | $6 | |
-| LEDs | WS2812B addressable LED strip (6–8 LEDs) | 1 | $4 | Needs only one data wire |
-| Enclosure | Aluminum, Hammond **1590DD** size (6–8 switches) | 1 | $20 | 1590BB fits 4 switches |
-| Power (simple) | Any USB power bank | – | $0 | Use one you already have |
-| Power (built-in) | 18650 cell + holder + **IP5306** or TP4056+boost board + on/off switch | 1 set | $10 | |
-| Wiring | Hookup wire, heat-shrink, rubber feet | – | $5 | |
-| Expression pedal | M-Audio EX-P, Moog EP-3 or similar (TRS) | 0–2 | $25–40 each | Only if you want feature D |
-
-**Tools:** a soldering iron for the footswitch tabs (or buy switches with pre-soldered wires), a drill with a step bit for the enclosure holes, and a USB cable for your Mac.
-
-## 4. Pin plan (ESP32-WROOM-32)
-| Function | GPIO | Why |
+| | ESP32 | Raspberry Pi |
 |---|---|---|
-| Footswitches 1–8 | 13, 14, 16, 17, 18, 19, 23, 25 | Internal pull-ups; each switch goes to GND |
-| OLED SDA / SCL | 21 / 22 | Default I²C pins |
-| WS2812 LED data | 26 | |
-| Expression 1 / 2 (ADC) | 34 / 35 | Input-only **ADC1** pins; ADC2 pins stop working while Bluetooth is on |
-| Volume knob (ADC) | 32 | ADC1 |
-| Battery voltage sense | 36 (VP) | through a 100k/100k divider |
+| Price | ~$6 | $35–80+ (plus SD card) |
+| Start-up time | ~2 seconds | 30+ seconds |
+| Battery life on one 18650 cell | ~15 hours | ~3–4 hours |
+| Existing Spark pedal software | ✅ Ignitron, SparkBox | ❌ you'd write it yourself |
 
-## 5. Software approach
-1. **Start from Ignitron** (BSD-3, proven on Spark 40). It already has preset banks, FX mode, tuner, looper/keyboard mode and an OLED UI.
-2. **Add on top (our fork):**
-   - Volume up/down and knob → amp Master parameter
-   - Expression pedal inputs with configurable targets. SparkBox (github.com/happyhappysundays/SparkBox) has working expression code to borrow from.
-   - Wi-Fi setup page for button mapping
-   - Optional: import tones created in the Spark Switch web app
-3. **Build and flash** with VS Code + PlatformIO on your Mac. Updates can later be sent over Wi-Fi.
+### "Can I still use my Spark app?"
+Yes, in two ways:
+1. **Design and name tones in the Spark app, then save them into the pedal.**
+   - Hold switch 1 while powering on the pedal. It now appears to the Spark app as an amp (this is called AMP mode).
+   - The iPhone Spark app connects to it.
+   - Pick any tone, from your own or ToneCloud, **name it** the way you want, and save it to the pedal.
+   - The display then shows that name. This is how you **rename channels**.
+2. **While you play:** the pedal uses the amp's one control connection, so the Spark app can't control the amp at the same time. However:
+   - Your iPhone can still **stream music or backing tracks** to the Spark 40 over Bluetooth audio.
+   - The pedal can also act as a Bluetooth keyboard to control phone apps (a looper, tabs or backing tracks).
+
+### "No expression pedal – can we add a pedal or a physical switch keyboard?"
+Options, from most to least recommended:
+
+| Option | What you get | Cost | Notes |
+|---|---|---|---|
+| **Footswitches** (main input) | 6 stomp switches | $10 | Built for feet; this is the core of the pedal |
+| **Volume knob** on the pedal | Turn to set the tone's Master volume | $1.50 | Needs a small addition to Ignitron (I can write it) |
+| **Expression jack** (TRS 1/4") | Plug in any expression pedal later for volume or wah swells | $1.50 | Same addition; drill one hole now, buy a pedal later (~$25 used) |
+| Mechanical keyboard switches | Compact buttons for hands, not feet | $5 | Good for a desktop box, bad on the floor |
+| Your KZZI keyboard plugged into the pedal | Key presses switch tones | – | Possible with a different chip (ESP32-S3) and custom code. Not recommended: the **web app already does this with your phone** |
+
+**Recommendation:** 6 footswitches + volume knob + expression jack. Use the KZZI keyboard + web app for practicing at a desk.
+
+---
+
+## 2. Parts list (≈ $50)
+
+Prices are approximate (AliExpress/Tayda cheapest, Amazon faster). Use the search terms to find parts.
+
+| # | Part | Search term | Qty | ~Cost |
+|---|---|---|---|---|
+| 1 | ESP32 board | "ESP32 WROOM-32 DevKit 38 pin USB-C" | 1 | $6 |
+| 2 | Footswitches | "momentary soft touch footswitch SPST" (**not latching**) | 6 | $10 |
+| 3 | Display | "1.3 inch OLED I2C SH1106 128x64" | 1 | $6 |
+| 4 | Battery | 18650 **protected** cell, brand name (Samsung, LG, Molicel) | 1 | $6 |
+| 5 | Charger | "TP4056 USB-C 18650 charger module with protection" | 1 | $2 |
+| 6 | 5 V booster | "MT3608 boost converter" (or one "18650 battery shield" that replaces #5 and #6) | 1 | $2 |
+| 7 | Battery holder + power switch | "18650 holder with leads" + "mini slide switch" | 1 | $2 |
+| 8 | Enclosure | "1590DD aluminum enclosure" (fits 6 switches + display) | 1 | $10 |
+| 9 | Volume knob | "10k linear potentiometer B10K" + knob | 1 | $1.50 |
+| 10 | Expression jack | "6.35mm TRS stereo jack panel mount" | 1 | $1.50 |
+| 11 | Resistors | 6 × 1 kΩ (switches), 2 × 100 kΩ (battery sense) | – | $1 |
+| 12 | Wire | 22–24 AWG hookup wire, dupont jumpers, heat-shrink | – | $3 |
+| | **Total** | | | **≈ $51** |
+
+Optional:
+- 6 × 5 mm LEDs + 470 Ω resistors + holders (+$3) show the active effect or tone. The display already shows the channel, so you can skip them at first.
+- An ESP32 screw-terminal breakout board (+$4) means less soldering (see section 3).
+
+**Tools (not in budget):**
+- A soldering iron. A Pinecil or any temperature-controlled iron is about $25. Borrow one if you can.
+- Solder, and a drill with a step bit (4–13 mm) for the enclosure.
+- A multimeter is helpful (~$15).
+
+**Battery life:** the ESP32 + Bluetooth + display draw about 120 mA, so a 3000 mAh cell gives **~15–20 hours**. Charge it over USB-C.
+
+---
+
+## 3. Soldering options
+
+| Option | Solder joints | Skill | Neatness | Extra cost |
+|---|---|---|---|---|
+| **A. Screw-terminal breakout** (recommended for a first build) | ~20 (switch tabs, battery modules) | Beginner | OK | +$4 |
+| B. Perfboard "shield" | ~60 | Some practice | Good | $0 |
+| C. Ignitron's custom PCB | ~50 | Some practice | Best | +$15–20 (PCB order) |
+
+With **Option A**:
+- The ESP32 plugs into the breakout board, and wires go into screw terminals.
+- The display connects with 4 plug-in jumper wires.
+- You only solder the footswitch lugs, the battery modules, the knob and the jack. These are all big and easy joints.
+
+---
+
+## 4. Wiring plan
+**Footswitch wiring** (same for all 6):
+```
+3V3 ──[footswitch]──┬── GPIO pin
+                    └──[1 kΩ]── GND
+```
+The pin reads HIGH when the switch is pressed. The 1 kΩ resistor pulls the pin down to LOW when released.
+
+| Function | ESP32 pin | Connection |
+|---|---|---|
+| Switch 1 (Tone 1 / Drive) | GPIO 25 | footswitch to 3V3, 1 kΩ to GND |
+| Switch 2 (Tone 2 / Mod) | GPIO 26 | same |
+| Switch 3 (Tone 3 / Delay) | GPIO 32 | same |
+| Switch 4 (Tone 4 / Reverb) | GPIO 33 | same |
+| Switch 5 (Bank down / Noise gate) | GPIO 19 | same |
+| Switch 6 (Bank up / Comp) | GPIO 18 | same |
+| Display GND / VCC / SCL / SDA | GND / 3V3 / GPIO 22 / GPIO 21 | 4 jumper wires |
+| LEDs 1–6 (optional) | GPIO 27, 13, 16, 14, 23, 17 | pin → 470 Ω → LED long leg; LED short leg → GND |
+| Battery voltage | GPIO 36 (VP) | middle of a 100k/100k divider across the battery (+ to GND) |
+| Volume knob (new) | GPIO 34 | knob wiper (middle leg); outer legs to 3V3 and GND |
+| Expression jack (new) | GPIO 35 | jack tip; ring to 3V3, sleeve to GND |
+| Power | 5V (VIN) / GND | battery → charger → power switch → MT3608 (set to 5.0 V) → 5V pin |
+
+Source: `hardware/Ignitron-Schematics.pdf` for switches, LEDs and display; `src/Config_Definitions.h` for pins.
+Only GPIO 34/35 are new. They are input-only ADC1 pins, which keep working while Bluetooth is on.
+
+
+---
+
+## 5. Firmware plan
+
+| Step | What | Who |
+|---|---|---|
+| 1 | Install VS Code + PlatformIO on the Mac | you (I'll give exact steps) |
+| 2 | Flash **stock Ignitron** with settings for this build: `OLED_DRIVER_SH1106`, battery type Li-ion ×1 cell | I prepare the config |
+| 3 | Bench test: ESP32 on USB + 2 switches + display, with the Spark 40 switching tones | you |
+| 4 | Save your own tones and names from the iPhone Spark app (AMP mode) | you |
+| 5 | **Add volume knob + expression jack support** (Master volume of the current tone) | I write it (our fork of Ignitron, BSD-3) |
+| 6 | Later, optional: a Wi-Fi page on the pedal to rename or reorder tones from your phone's browser | I write it |
+
+---
 
 ## 6. Build order
-1. **Bench test (1 evening):** bare ESP32 on USB + 2 switches on a breadboard, with Ignitron flashed. Switching presets on the Spark 40 proves the setup works.
-2. **Add parts one at a time:** display, then all switches, then LEDs, then the expression jack.
-3. **Firmware additions:** volume, expression, Wi-Fi setup.
-4. **Enclosure:** drill, mount and wire.
-5. **Battery** (optional).
+1. **Order parts.** AliExpress takes 2–3 weeks; Amazon is faster but costs more.
+2. **Bench test on the desk** (1 evening): ESP32 + display + 2 switches with jumper wires. Flash Ignitron and switch tones on the Spark 40.
+3. **Load your tones** from the Spark app.
+4. **Drill the enclosure** (1 afternoon). Print a paper template, center-punch, then use a step bit.
+5. **Wire everything in the box** (1–2 evenings): switches, then display, then battery, then knob and jack.
+6. **Add the volume/expression firmware.**
 
-## 7. Decisions needed from you
-1. **How many footswitches?** 4 (compact), **6** (recommended: 4 tones + bank up/down), or 8 (adds 2 dedicated FX or volume switches)
-2. **Expression pedals:** none / 1 / 2? Do you already own one?
-3. **Volume control style:** up/down footswitches, a knob on the pedal, or expression pedal?
-4. **Display:** yes/no?
-5. **Power:** USB power bank or built-in rechargeable battery?
-6. **Soldering:** comfortable, or should we choose a solderless build (screw terminals, pre-wired switches)?
-7. **Phone app control** (looper, backing tracks, sheet music): wanted?
-8. **Budget ceiling?**
+## 7. Open questions
+1. Do you already own a **soldering iron** and a **drill**?
+2. Order from **AliExpress** (cheapest, slow) or **Amazon** (fast, about +$15)?
+3. **LEDs** now or skip?
+4. Screw-terminal breakout (**Option A**) or perfboard (**Option B**)?
