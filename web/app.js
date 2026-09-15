@@ -1,15 +1,15 @@
 import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, SparkReader, describe, hex,
-} from "./spark-protocol.js?v=4";
+} from "./spark-protocol.js?v=5";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=4";
-import * as library from "./library.js?v=4";
-import { FX_BY_SLOT, paramLabel, displayName } from "./fx-catalog.js?v=4";
+} from "./spark-preset.js?v=5";
+import * as library from "./library.js?v=5";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=5";
 
-const APP_VERSION = "v4";
+const APP_VERSION = "v5";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -276,25 +276,11 @@ function renderTone() {
 
   const amp = ampPedal();
   ui.sliders.innerHTML = "";
-  if (amp) {
-    for (const [label, index] of Object.entries(AMP_PARAM)) {
-      const value = amp.parameters[index];
-      if (value === undefined) continue;
-      const row = document.createElement("label");
-      row.className = "slider";
-      row.innerHTML = `<span>${label === "master" ? "volume" : label}</span>
-        <input type="range" min="0" max="1" step="0.01" value="${value}">
-        <output>${Math.round(value * 100)}</output>`;
-      const input = row.querySelector("input");
-      const out = row.querySelector("output");
-      input.addEventListener("input", () => {
-        const v = Number(input.value);
-        out.textContent = Math.round(v * 100);
-        sendParameter(AMP_SLOT, index, v);
-        ui.revert.hidden = !hasChanges();
-      });
-      ui.sliders.append(row);
-    }
+  if (amp?.parameters[AMP_PARAM.master] !== undefined) {
+    const volume = parameterSlider(amp.name, AMP_SLOT, AMP_PARAM.master, amp.parameters[AMP_PARAM.master]);
+    volume.classList.add("volume");
+    volume.querySelector("span").textContent = "volume";
+    ui.sliders.append(volume);
   }
 
   ui.revert.hidden = !hasChanges();
@@ -325,7 +311,7 @@ function effectRow(pedal, slotIndex) {
 
   const summary = document.createElement("summary");
   summary.innerHTML = `<span class="fx-label">${SLOT_LABELS[slotIndex]}</span>
-    <span class="fx-name">${escapeHtml(displayName(pedal.name))}</span>`;
+    <span class="fx-name">${escapeHtml(displayName(pedal.name, pedal.parameters))}</span>`;
   const power = document.createElement("button");
   power.type = "button";
   power.className = `power${pedal.isOn ? " on" : ""}`;
@@ -341,17 +327,32 @@ function effectRow(pedal, slotIndex) {
   const body = document.createElement("div");
   body.className = "fx-body";
 
-  const options = FX_BY_SLOT[slotIndex] ?? [];
-  if (options.length > 1) {
+  const info = fxInfo(pedal.name);
+  if (info?.variants) {
+    // One effect, several models chosen by a knob value (the reverbs).
+    const current = pedal.parameters[info.selector] ?? 0;
     const picker = document.createElement("select");
-    const known = options.some((o) => o.tech === pedal.name);
-    if (!known) picker.append(new Option(pedal.name, pedal.name, true, true));
-    for (const opt of options) picker.append(new Option(opt.app, opt.tech, false, opt.tech === pedal.name));
-    picker.addEventListener("change", () => swapEffect(slotIndex, picker.value));
+    for (const v of info.variants) {
+      picker.append(new Option(v.app, String(v.value), false, Math.abs(v.value - current) < 0.05));
+    }
+    picker.addEventListener("change", () => {
+      sendParameter(slotIndex, info.selector, Number(picker.value));
+      renderTone();
+    });
     body.append(picker);
+  } else {
+    const options = FX_BY_SLOT[slotIndex] ?? [];
+    if (options.length > 1) {
+      const picker = document.createElement("select");
+      if (!options.some((o) => o.tech === pedal.name)) picker.append(new Option(pedal.name, pedal.name, true, true));
+      for (const opt of options) picker.append(new Option(opt.app, opt.tech, false, opt.tech === pedal.name));
+      picker.addEventListener("change", () => swapEffect(slotIndex, picker.value));
+      body.append(picker);
+    }
   }
 
   pedal.parameters.forEach((value, p) => {
+    if (info?.selector === p) return; // that knob is the model picker above
     body.append(parameterSlider(pedal.name, slotIndex, p, value));
   });
   row.append(body);
@@ -388,7 +389,8 @@ function onNotification(event) {
         log(`← tone "${tone.name}"`);
         setTone(tone);
       } catch (err) {
-        log(`tone decode failed: ${err.message}`);
+        log(`tone decode failed (${err.message}) – asking again`);
+        setTimeout(() => send(getCurrentPreset(-1, nextMsgNum()), "get tone"), 500);
       }
     } else if (info?.type === "preset") {
       log(`← amp preset: ${info.preset ?? "custom"}`);
@@ -606,7 +608,7 @@ render();
 if (new URLSearchParams(location.search).has("demo")) {
   state.connected = true;
   state.activeSlot = 2;
-  state.openSlots.add(2);
+  state.openSlots.add(6);
   setStatus("connected", "Connected: Spark 40 BLE (demo)");
   setTone({
     name: "Ac Dc", pedals: [

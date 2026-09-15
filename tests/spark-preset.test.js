@@ -139,3 +139,45 @@ test("change effect model sends both technical names", () => {
   assert.deepEqual(msg.data.slice(9, 11), [4, 0xa4]);
   assert.equal(String.fromCharCode(...msg.data.slice(11)), "Fuzz");
 });
+
+test("interleaved or missing chunks never produce a corrupt tone", () => {
+  const [full] = payloadFromBlocks(encodePreset(TONE, 1));
+  const payload = full.data;
+  const chunkSize = 0x19;
+  const count = Math.ceil(payload.length / chunkSize);
+
+  const toBlock = (i, msgNum) => {
+    const part = payload.slice(i * chunkSize, (i + 1) * chunkSize);
+    const data8 = [count, i, part.length, ...part];
+    const data7 = [];
+    for (let s = 0; s < data8.length; s += 7) {
+      const seq = data8.slice(s, s + 7);
+      let high = 0;
+      seq.forEach((b, j) => { if (b & 0x80) high |= 1 << j; });
+      data7.push(high, ...seq.map((b) => b & 0x7f));
+    }
+    const chunk = [0xf0, 0x01, msgNum, data7.reduce((a, b) => a ^ b, 0), 0x03, 0x01, ...data7, 0xf7];
+    return [0x01, 0xfe, 0x00, 0x00, 0x41, 0xff, 16 + chunk.length, ...new Array(9).fill(0), ...chunk];
+  };
+
+  // Missing first chunk: nothing should be emitted.
+  const dropped = new SparkReader();
+  let out = [];
+  for (let i = 1; i < count; i++) out = out.concat(dropped.push(toBlock(i, 0x20)));
+  assert.deepEqual(out, [], "a tone missing its first chunk must be discarded");
+
+  // A second message interrupting the first: only the complete one is emitted.
+  const mixed = new SparkReader();
+  out = mixed.push(toBlock(0, 0x20));
+  out = out.concat(mixed.push(toBlock(0, 0x21)));
+  for (let i = 1; i < count; i++) out = out.concat(mixed.push(toBlock(i, 0x21)));
+  assert.equal(out.length, 1);
+  assert.equal(decodePreset(out[0].data).name, "Ac Dc");
+});
+
+test("garbled payloads are rejected instead of decoded as junk", () => {
+  assert.throws(() => decodePreset([0x00, 0x7f, 0xd9, 0x03, 0x41]), /too short/);
+  const junk = new Array(80).fill(0);
+  junk[2] = 0xd9; junk[3] = 4; junk[4] = 0x01; // unprintable name characters
+  assert.throws(() => decodePreset(junk), /bad/);
+});

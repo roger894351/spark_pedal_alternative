@@ -78,7 +78,9 @@
     #tone-panel { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
     #tone-panel h2 { font-size: 15px; margin: 0 0 10px; display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
     #tone-name { color: var(--accent); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .slider { display: grid; grid-template-columns: 70px 1fr 34px; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 13px; color: var(--muted); }
+    .slider { display: grid; grid-template-columns: 76px 1fr 34px; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 13px; color: var(--muted); }
+    .slider.volume { margin-bottom: 12px; font-size: 14px; color: var(--text); }
+    .slider.volume input { height: 26px; }
     .slider input { width: 100%; accent-color: var(--accent); }
     .slider output { text-align: right; font: 12px ui-monospace, Menlo, monospace; color: var(--text); }
     #effects { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
@@ -217,6 +219,6 @@
       <pre id="log"></pre>
     </details>
   </main>
-  <script type="module" src="app.js?v=4"></script>
+  <script type="module" src="app.js?v=5"></script>
 </body>
 </html>

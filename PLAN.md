@@ -160,7 +160,8 @@ Two ways to do it:
 - [x] Real-amp test: works on Mac Chrome and iPhone (Bluefy, v2) – confirmed 2026-09-15
 - [x] Hosted on GitHub Pages: https://roger894351.github.io/spark_pedal_alternative/
 - [x] Phase 2: tone library in banks of 4 (Ignitron-format import/export), volume + EQ sliders, effect on/off – confirmed working on the amp 2026-09-15
-- [x] Phase 2b (v4): per-effect knob sliders, effect model swap (cmd 01 06), "Undo my changes" revert – built, needs amp test
+- [x] Phase 2b (v4): per-effect knob sliders, effect model swap (cmd 01 06), "Undo my changes" revert – confirmed on the amp 2026-09-15
+- [x] Phase 2c (v5): reverb type picker, collapsed layout (volume only on top), strict tone reassembly + validation after a garbled tone name appeared in the log
 - [ ] Phase 3 ESP32 pedal – build spec v2 in ESP32_CONTROLLER.md (Ignitron + 3D-printed case, no drilling, USB power bank, keyboard mode for Anki); next: order parts
 
 ## 7. References

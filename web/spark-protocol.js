@@ -79,7 +79,7 @@ export class SparkReader {
   constructor() {
     this.blockBuf = [];
     this.chunkBuf = [];
-    this.partial = [];
+    this.partial = null;
   }
 
   push(bytes) {
@@ -120,23 +120,36 @@ export class SparkReader {
       const [, , msgNum, , cmd, subCmd] = buf.slice(start, start + 6);
       const data = from7Bit(buf.slice(start + 6, end));
       this.chunkBuf = buf.slice(end + 1);
-      const joined = this.#joinMultiChunk(cmd, subCmd, data);
+      const joined = this.#joinMultiChunk(msgNum, cmd, subCmd, data);
       if (joined) messages.push({ msgNum, cmd, subCmd, data: joined });
     }
   }
 
-  // Full tones (cmd 01/03, sub 01) are split over several chunks, each carrying
-  // a (chunk count, chunk index, length) sub-header. Returns null until the last one.
-  #joinMultiChunk(cmd, subCmd, data) {
+  // Full tones (cmd 01/03, sub 01) are split over several chunks, each carrying a
+  // (chunk count, chunk index, length) sub-header. Chunks must arrive in order and
+  // belong to one message; anything else resets, so a dropped or interleaved chunk
+  // can't be glued into a corrupt tone. Returns null until the last chunk.
+  #joinMultiChunk(msgNum, cmd, subCmd, data) {
     const isToneChunk = (cmd === 0x01 || cmd === 0x03) && subCmd === 0x01
       && data.length > 3 && data[0] >= 1 && data[1] < data[0] && data[2] === data.length - 3;
     if (!isToneChunk) return data;
     const [count, index] = data;
-    if (index === 0) this.partial = [];
-    this.partial.push(...data.slice(3));
+    const body = data.slice(3);
+
+    if (index === 0) {
+      this.partial = { msgNum, count, next: 1, bytes: body };
+    } else if (this.partial && this.partial.msgNum === msgNum
+               && this.partial.count === count && this.partial.next === index) {
+      this.partial.bytes.push(...body);
+      this.partial.next = index + 1;
+    } else {
+      this.partial = null; // out of order or from another message: wait for a fresh chunk 0
+      return null;
+    }
+
     if (index !== count - 1) return null;
-    const complete = this.partial;
-    this.partial = [];
+    const complete = this.partial.bytes;
+    this.partial = null;
     return complete;
   }
 }

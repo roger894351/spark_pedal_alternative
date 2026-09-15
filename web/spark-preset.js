@@ -84,7 +84,11 @@ export function encodePreset(tone, msgNum = 1) {
   return buildMessage(0x01, 0x01, data, msgNum);
 }
 
+// A tone payload must at least hold its header, 6 short fields and 7 pedals.
+const PRINTABLE = /^[\x20-\x7e]*$/;
+
 export function decodePreset(data) {
+  if (data.length < 40) throw new Error(`tone too short (${data.length} bytes)`);
   const c = new Cursor(data);
   c.byte();
   const presetNumber = c.byte();
@@ -109,8 +113,11 @@ export function decodePreset(data) {
       c.byte(); // 0x91 tag
       parameters.push(Math.round(c.float() * 10000) / 10000);
     }
+    if (!name || !PRINTABLE.test(name)) throw new Error(`bad effect name in slot ${i}`);
     tone.pedals.push({ name, isOn, parameters });
   }
+  if (!tone.name || !PRINTABLE.test(tone.name)) throw new Error("bad tone name");
+  if (!PRINTABLE.test(tone.uuid)) throw new Error("bad tone id");
   return tone;
 }
 

@@ -1,5 +1,6 @@
 // Effect catalog: technical name → slot, display name and knob labels.
-// Generated from Ignitron's FX reference table (README.md, BSD-3). Do not edit by hand.
+// `variants` covers effects where one internal name holds several models chosen by a
+// knob value (the reverbs). Generated from Ignitron's FX reference (README.md, BSD-3).
 
 export const FX_CATALOG = {
 "6505Plus": {
@@ -119,6 +120,10 @@ export const FX_CATALOG = {
 "app": "Bass EQ",
 "params": [
 "Level",
+"50",
+"120",
+"400",
+"800",
 "4.5k",
 "10k"
 ],
@@ -375,6 +380,10 @@ export const FX_CATALOG = {
 "app": "Guitar EQ",
 "params": [
 "Level",
+"100",
+"200",
+"400",
+"800",
 "1.6k",
 "3.2k"
 ],
@@ -798,10 +807,50 @@ export const FX_CATALOG = {
 "Dwell",
 "Time",
 "Low Cut",
-"High Cut"
+"High Cut",
+"Selects Reverb Type"
 ],
+"selector": 6,
 "slot": 6,
-"type": "Reverb"
+"type": "Reverb",
+"variants": [
+{
+"app": "Room Studio A",
+"value": 0.0
+},
+{
+"app": "Room Studio B",
+"value": 0.1
+},
+{
+"app": "Chamber",
+"value": 0.2
+},
+{
+"app": "Hall Natural",
+"value": 0.3
+},
+{
+"app": "Hall Medium",
+"value": 0.4
+},
+{
+"app": "Hall Ambient",
+"value": 0.5
+},
+{
+"app": "Plate Short",
+"value": 0.6
+},
+{
+"app": "Plate Rich",
+"value": 0.7
+},
+{
+"app": "Plate Long",
+"value": 0.8
+}
+]
 }
 };
 
@@ -813,4 +862,12 @@ export const FX_BY_SLOT = Object.entries(FX_CATALOG).reduce((acc, [tech, fx]) =>
 
 export const fxInfo = (tech) => FX_CATALOG[tech] ?? null;
 export const paramLabel = (tech, index) => FX_CATALOG[tech]?.params?.[index] ?? `param ${index}`;
-export const displayName = (tech) => FX_CATALOG[tech]?.app ?? tech;
+export const displayName = (tech, parameters) => {
+  const fx = FX_CATALOG[tech];
+  if (!fx) return tech;
+  if (!fx.variants || !parameters) return fx.app;
+  const value = parameters[fx.selector] ?? 0;
+  const match = fx.variants.reduce((best, v) =>
+    Math.abs(v.value - value) < Math.abs(best.value - value) ? v : best);
+  return match.app;
+};
