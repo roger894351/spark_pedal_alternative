@@ -1,7 +1,7 @@
 import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, SparkReader, describe, hex,
-} from "./spark-protocol.js";
+} from "./spark-protocol.js?v=2";
 
 // Keyboard map, by KeyboardEvent.code so it works regardless of layout.
 const KEYMAP = {
@@ -15,10 +15,24 @@ const KEYMAP = {
 
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const ACK_TIMEOUT_MS = 700;
+const APP_VERSION = "v2";
+
+// Shown on screen when connecting fails, keyed by DOMException name.
+const CONNECT_HINTS = {
+  NotFoundError: "No amp chosen. If the list was empty: close the page on other devices (e.g. Mac Chrome), forget \"Spark 40 BLE\" in iPhone Settings → Bluetooth, power-cycle the amp, then try \"Show all devices\".",
+  SecurityError: "Bluetooth is blocked. Open the page over https:// in Bluefy, and allow Bluetooth for Bluefy in iPhone Settings → Bluefy.",
+  NotAllowedError: "Bluetooth permission denied. Allow Bluetooth for Bluefy in iPhone Settings → Bluefy.",
+  NetworkError: "The amp refused the connection – usually another app or device is already connected to it. Close the Spark app / other pages, power-cycle the amp and retry.",
+  NotSupportedError: "The amp didn't expose the Spark control service. Tap \"Show all devices\" and pick the entry ending in \"BLE\" (not \"Audio\").",
+};
 
 const $ = (id) => document.getElementById(id);
 const ui = {
   connect: $("connect"),
+  connectAll: $("connect-all"),
+  hint: $("hint"),
+  copyLog: $("copy-log"),
+  version: $("version"),
   status: $("status"),
   statusText: $("status-text"),
   presets: [...document.querySelectorAll(".preset")],
@@ -69,7 +83,7 @@ function send(blocks, label) {
   writeQueue = writeQueue.then(async () => {
     for (const block of blocks) {
       log(`→ ${label}: ${hex(block)}`);
-      const props = state.writeChar.properties;
+      const props = state.writeChar.properties ?? {};
       if (props.writeWithoutResponse && state.writeChar.writeValueWithoutResponse) {
         await state.writeChar.writeValueWithoutResponse(block);
       } else {
@@ -122,14 +136,23 @@ function onNotification(event) {
   }
 }
 
+function showHint(text) {
+  ui.hint.textContent = text ?? "";
+  ui.hint.hidden = !text;
+}
+
 async function openGatt() {
   setStatus("connecting", `Connecting to ${state.device.name ?? "Spark"}…`);
+  log(`gatt connect → ${state.device.name ?? "(no name)"}`);
   const server = await state.device.gatt.connect();
+  log("getting Spark service ffc0");
   const service = await server.getPrimaryService(SPARK_SERVICE);
   state.writeChar = await service.getCharacteristic(SPARK_WRITE_CHAR);
   const notifyChar = await service.getCharacteristic(SPARK_NOTIFY_CHAR);
+  log("starting notifications ffc2");
   notifyChar.addEventListener("characteristicvaluechanged", onNotification);
   await notifyChar.startNotifications();
+  showHint(null);
 
   state.connected = true;
   setStatus("connected", `Connected: ${state.device.name ?? "Spark"}`);
@@ -139,19 +162,23 @@ async function openGatt() {
   send(getCurrentPresetNumber(nextMsgNum()), "get preset");
 }
 
-async function connect() {
+async function connect({ allDevices = false } = {}) {
   if (!navigator.bluetooth) return;
   state.userDisconnected = false;
+  showHint(null);
   try {
-    state.device = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [SPARK_SERVICE] }, { namePrefix: "Spark" }],
-      optionalServices: [SPARK_SERVICE],
-    });
+    const options = allDevices
+      ? { acceptAllDevices: true, optionalServices: [SPARK_SERVICE] }
+      : { filters: [{ services: [SPARK_SERVICE] }, { namePrefix: "Spark" }], optionalServices: [SPARK_SERVICE] };
+    log(allDevices ? "requesting device (all devices)" : "requesting device (Spark filter)");
+    state.device = await navigator.bluetooth.requestDevice(options);
     state.device.addEventListener("gattserverdisconnected", onDisconnected);
     await openGatt();
   } catch (err) {
-    log(`connect failed: ${err.message}`);
-    setStatus("disconnected", err.name === "NotFoundError" ? "No amp selected" : "Connection failed – see log");
+    log(`connect failed: ${err.name}: ${err.message}`);
+    state.device?.gatt?.connected && state.device.gatt.disconnect();
+    setStatus("disconnected", err.name === "NotFoundError" ? "No amp selected" : "Connection failed");
+    showHint(CONNECT_HINTS[err.name] ?? `Connection failed (${err.name}). Open "Bluetooth log" below, tap Copy log and send it.`);
   }
 }
 
@@ -216,6 +243,22 @@ ui.connect.addEventListener("click", () => {
   else connect();
 });
 
+ui.connectAll.addEventListener("click", () => {
+  if (!state.connected) connect({ allDevices: true });
+});
+
+ui.copyLog.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(ui.log.textContent);
+    ui.copyLog.textContent = "Copied";
+  } catch {
+    // Clipboard unavailable: select the text so the user can copy it manually.
+    getSelection().selectAllChildren(ui.log);
+    ui.copyLog.textContent = "Selected – use Copy";
+  }
+  setTimeout(() => (ui.copyLog.textContent = "Copy log"), 2000);
+});
+
 ui.presets.forEach((btn) => {
   btn.addEventListener("click", () => {
     selectPreset(Number(btn.dataset.preset));
@@ -223,11 +266,20 @@ ui.presets.forEach((btn) => {
   });
 });
 
+ui.version.textContent = APP_VERSION;
+log(`${APP_VERSION} · ${navigator.userAgent}`);
+log(`web bluetooth: ${navigator.bluetooth ? "yes" : "no"} · secure context: ${window.isSecureContext}`);
+
 if (!navigator.bluetooth) {
   ui.unsupported.hidden = false;
   ui.connect.disabled = true;
+  ui.connectAll.disabled = true;
   setStatus("disconnected", "Bluetooth not available in this browser");
 } else {
   setStatus("disconnected", "Not connected");
+  navigator.bluetooth.getAvailability?.().then((available) => {
+    log(`bluetooth available: ${available}`);
+    if (!available) showHint("Bluetooth looks off or blocked. Turn Bluetooth on and allow it for this browser (iPhone Settings → Bluefy → Bluetooth).");
+  }).catch(() => {});
 }
 render();

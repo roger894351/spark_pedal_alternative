@@ -2,9 +2,11 @@
 // Format derived from Ignitron (github.com/stangreg/Ignitron, BSD-3) src/SparkMessage.cpp
 // and paulhamsh/Spark "Spark Protocol Description".
 
-export const SPARK_SERVICE = 0xffc0;
-export const SPARK_WRITE_CHAR = 0xffc1;
-export const SPARK_NOTIFY_CHAR = 0xffc2;
+// Full 128-bit UUID strings: some iOS Web Bluetooth browsers don't accept 16-bit numeric aliases.
+const uuid16 = (short) => `0000${short}-0000-1000-8000-00805f9b34fb`;
+export const SPARK_SERVICE = uuid16("ffc0");
+export const SPARK_WRITE_CHAR = uuid16("ffc1");
+export const SPARK_NOTIFY_CHAR = uuid16("ffc2");
 
 const MAX_CHUNK_SIZE_TO_SPARK = 0x80;
 const MAX_BLOCK_SIZE_TO_SPARK = 0xad;

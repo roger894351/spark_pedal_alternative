@@ -57,6 +57,16 @@
     }
     #status[data-state="connecting"]::before { background: var(--warn); }
     #status[data-state="connected"]::before { background: var(--ok); }
+    .status-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    button.link {
+      border: 0; background: none; padding: 4px 0; color: var(--accent); font-size: 14px; text-decoration: underline;
+    }
+    button.link:disabled { opacity: .4; }
+    #hint {
+      border: 1px solid var(--warn); border-radius: 12px; padding: 10px 14px; font-size: 14px;
+      color: var(--text); background: rgba(245, 197, 66, .08); user-select: text;
+    }
+    #version { opacity: .6; }
 
     .grid {
       flex: 1;
@@ -106,7 +116,11 @@
       <h1>Spark <span>Switch</span></h1>
       <button id="connect" type="button">Connect to Spark</button>
     </header>
-    <div id="status" data-state="disconnected"><span id="status-text">Not connected</span></div>
+    <div class="status-row">
+      <div id="status" data-state="disconnected"><span id="status-text">Not connected</span></div>
+      <button id="connect-all" class="link" type="button">Show all devices</button>
+    </div>
+    <div id="hint" role="alert" hidden></div>
 
     <div id="unsupported" hidden>
       <p><strong>This browser can't use Bluetooth.</strong></p>
@@ -125,14 +139,16 @@
       Keyboard: <kbd>1</kbd>–<kbd>4</kbd> select preset ·
       <kbd>←</kbd>/<kbd>↑</kbd>/<kbd>PgUp</kbd> previous ·
       <kbd>→</kbd>/<kbd>↓</kbd>/<kbd>PgDn</kbd> next.
-      Close the official Spark app first – the amp allows one control connection.
+      Close the official Spark app first – and this page on any other device (e.g. your Mac) –
+      the amp allows only one control connection.
     </p>
 
     <details>
-      <summary>Bluetooth log</summary>
+      <summary>Bluetooth log <span id="version"></span></summary>
+      <button id="copy-log" class="link" type="button">Copy log</button>
       <pre id="log"></pre>
     </details>
   </main>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app.js?v=2"></script>
 </body>
 </html>
