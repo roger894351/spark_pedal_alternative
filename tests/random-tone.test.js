@@ -19,7 +19,7 @@ test("random tones are valid and keep a steady volume", () => {
       assert.ok(info, `unknown effect ${pedal.name}`);
       assert.equal(pedal.parameters.length, info.params.length);
       assert.ok(pedal.parameters.every((v) => v >= 0 && v <= 1), "knobs stay in range");
-      assert.ok(!pedal.name.startsWith("JH."), "paid Hendrix gear stays out of random tones");
+
     }
   }
 });
@@ -32,4 +32,11 @@ test("a random tone survives the trip to the amp and back", () => {
   const decoded = decodePreset(describeMsg(messages[0]).data);
   assert.equal(decoded.name, "Random 7");
   assert.deepEqual(decoded.pedals.map((p) => p.name), tone.pedals.map((p) => p.name));
+});
+
+test("Hendrix gear is included by default and can be switched off", () => {
+  const free = Array.from({ length: 40 }, (_, i) => randomTone(BASE, i, { includePaid: false }));
+  assert.ok(free.every((t) => t.pedals.every((p) => !p.name.startsWith("JH."))), "opt-out must exclude paid gear");
+  const any = Array.from({ length: 300 }, (_, i) => randomTone(BASE, i));
+  assert.ok(any.some((t) => t.pedals.some((p) => p.name.startsWith("JH."))), "default should allow paid gear");
 });

@@ -1,16 +1,16 @@
 import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, SparkReader, describe, hex,
-} from "./spark-protocol.js?v=7";
+} from "./spark-protocol.js?v=8";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=7";
-import * as library from "./library.js?v=7";
-import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=7";
-import { randomTone } from "./random-tone.js?v=7";
+} from "./spark-preset.js?v=8";
+import * as library from "./library.js?v=8";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=8";
+import { randomTone } from "./random-tone.js?v=8";
 
-const APP_VERSION = "v7";
+const APP_VERSION = "v8";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -54,6 +54,7 @@ const ui = {
   sliders: $("sliders"), effects: $("effects"),
   libCount: $("lib-count"), libList: $("lib-list"),
   saveTone: $("save-tone"), importFile: $("import-file"), exportLib: $("export-lib"),
+  includePaid: $("include-paid"),
   log: $("log"), copyLog: $("copy-log"), version: $("version"),
 };
 
@@ -140,7 +141,7 @@ function selectSlot(n) {
 function sendRandomTone() {
   if (!state.connected) return;
   state.preRandom = state.tone ? structuredClone(state.tone) : null;
-  const tone = randomTone(state.tone, ++state.randomCount);
+  const tone = randomTone(state.tone, ++state.randomCount, { includePaid: ui.includePaid.checked });
   state.activeSlot = null;
   state.pendingSlot = null;
   send(encodePreset(tone, nextMsgNum()), `random "${tone.name}"`);
@@ -569,6 +570,20 @@ ui.connect.addEventListener("click", () => {
 });
 ui.connectAll.addEventListener("click", () => { if (!state.connected) connect({ allDevices: true }); });
 ui.random.addEventListener("click", sendRandomTone);
+
+// Whether random tones may use the paid Hendrix gear; remembered per device.
+try {
+  ui.includePaid.checked = localStorage.getItem("spark-switch-include-jh") !== "no";
+} catch {
+  ui.includePaid.checked = true;
+}
+ui.includePaid.addEventListener("change", () => {
+  try {
+    localStorage.setItem("spark-switch-include-jh", ui.includePaid.checked ? "yes" : "no");
+  } catch {
+    // Storage unavailable: the choice still applies for this session.
+  }
+});
 ui.revert.addEventListener("click", revertTone);
 ui.bankPrev.addEventListener("click", () => stepBank(-1));
 ui.bankNext.addEventListener("click", () => stepBank(1));

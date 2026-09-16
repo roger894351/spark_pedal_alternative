@@ -108,6 +108,8 @@
     #lib-list li { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
     .lib-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 8px; }
     .lib-actions input[type=file] { font-size: 12px; color: var(--muted); max-width: 100%; }
+    .setting { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+    .setting input { accent-color: var(--accent); }
 
     .grid {
       display: grid;
@@ -210,6 +212,8 @@
         <button id="export-lib" class="link" type="button">Export (copy JSON)</button>
         <input id="import-file" type="file" accept=".json,application/json" multiple>
       </div>
+      <label class="setting"><input id="include-paid" type="checkbox" checked>
+        🎲 Random may use Hendrix (J.H.) gear – only if you bought that pack</label>
     </details>
 
     <p class="help">

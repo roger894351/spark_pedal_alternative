@@ -162,7 +162,7 @@ Two ways to do it:
 - [x] Phase 2: tone library in banks of 4 (Ignitron-format import/export), volume + EQ sliders, effect on/off – confirmed working on the amp 2026-09-15
 - [x] Phase 2b (v4): per-effect knob sliders, effect model swap (cmd 01 06), "Undo my changes" revert – confirmed on the amp 2026-09-15
 - [x] Phase 2c (v5): reverb type picker, collapsed layout (volume only on top), strict tone reassembly + validation after a garbled tone name appeared in the log
-- [x] Phase 2e (v7): edits no longer bounce back to the stored preset (the app keeps the live tone and pushes knob values after a model swap), random excludes paid Hendrix gear, "· edited" marker
+- [x] Phase 2e (v7): edits no longer bounce back to the stored preset (the app keeps the live tone and pushes knob values after a model swap), "· edited" marker; v8 makes Hendrix gear in random a remembered option (default on)
 - [x] Phase 2d (v6): 8 colour-coded slots (4 amp presets + 4 of my tones, banks via [ ]), arrow scrolling across all 8, 🎲 random tone generator, faster tone-name refresh
 - [ ] Phase 3 ESP32 pedal – build spec v2 in ESP32_CONTROLLER.md (Ignitron + 3D-printed case, no drilling, USB power bank, keyboard mode for Anki); next: order parts
 

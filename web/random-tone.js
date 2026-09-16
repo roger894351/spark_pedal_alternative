@@ -4,8 +4,8 @@
 import { FX_BY_SLOT, fxInfo } from "./fx-catalog.js";
 import { AMP_SLOT, AMP_PARAM, PEDAL_COUNT } from "./spark-preset.js";
 
-// The J.H. (Hendrix) gear is a paid in-app purchase, so random tones leave it out.
-const isFree = (fx) => !fx.tech.startsWith("JH.");
+// The J.H. (Hendrix) gear is a paid in-app purchase: included only if you own it.
+const isPaid = (fx) => fx.tech.startsWith("JH.");
 
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
 const between = (min, max) => Math.round((min + Math.random() * (max - min)) * 100) / 100;
@@ -21,11 +21,11 @@ const SLOT_RULES = [
   { chance: 0.75, min: 0.15, max: 0.5 }, // 6 reverb
 ];
 
-export function randomTone(baseTone, counter = 1) {
+export function randomTone(baseTone, counter = 1, { includePaid = true } = {}) {
   const pedals = [];
   for (let slot = 0; slot < PEDAL_COUNT; slot++) {
     const rule = SLOT_RULES[slot];
-    const options = (FX_BY_SLOT[slot] ?? []).filter(isFree);
+    const options = (FX_BY_SLOT[slot] ?? []).filter((fx) => includePaid || !isPaid(fx));
     const choice = options.length ? pick(options) : null;
     const name = choice?.tech ?? baseTone?.pedals?.[slot]?.name ?? "";
     const info = fxInfo(name);
