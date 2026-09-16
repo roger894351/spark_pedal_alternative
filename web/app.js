@@ -1,16 +1,16 @@
 import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, SparkReader, describe, hex,
-} from "./spark-protocol.js?v=8";
+} from "./spark-protocol.js?v=9";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=8";
-import * as library from "./library.js?v=8";
-import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=8";
-import { randomTone } from "./random-tone.js?v=8";
+} from "./spark-preset.js?v=9";
+import * as library from "./library.js?v=9";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=9";
+import { randomTone, MIN_MASTER } from "./random-tone.js?v=9";
 
-const APP_VERSION = "v8";
+const APP_VERSION = "v9";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -61,7 +61,7 @@ const ui = {
 const state = {
   device: null, writeChar: null, connected: false, userDisconnected: false,
   activeSlot: null, pendingSlot: null, // 1–4 = the amp's presets, 5–8 = the current bank of my tones
-  randomCount: 0, preRandom: null,
+  randomCount: 0, preRandom: null, lastRandom: 0,
   bank: 0,
   tones: library.load(),
   tone: null, // the tone currently loaded on the amp, as reported by it
@@ -120,6 +120,7 @@ const isAmpSlot = (n) => n <= AMP_SLOTS;
 function selectSlot(n) {
   if (!state.connected) return;
   if (isAmpSlot(n)) {
+    state.preRandom = null;
     state.pendingSlot = n;
     render();
     send(changeHardwarePreset(n, nextMsgNum()), `preset ${n}`);
@@ -129,6 +130,7 @@ function selectSlot(n) {
   } else {
     const tone = slotTone(n);
     if (!tone) return;
+    state.preRandom = null; // loading a real tone ends the random audition
     state.pendingSlot = n;
     render();
     send(encodePreset(tone, nextMsgNum()), `tone "${tone.name}"`);
@@ -140,8 +142,16 @@ function selectSlot(n) {
 
 function sendRandomTone() {
   if (!state.connected) return;
-  state.preRandom = state.tone ? structuredClone(state.tone) : null;
+  // Full tones are several BLE blocks each; don't flood the amp on a fast key repeat.
+  if (Date.now() - state.lastRandom < 250) return;
+  state.lastRandom = Date.now();
+  // Keep the first real tone, so Undo goes back to it however many randoms you audition.
+  if (!state.preRandom) state.preRandom = state.tone ? structuredClone(state.tone) : null;
+  const before = state.tone?.pedals?.[AMP_SLOT]?.parameters?.[AMP_PARAM.master];
   const tone = randomTone(state.tone, ++state.randomCount, { includePaid: ui.includePaid.checked });
+  if (before !== undefined && before < MIN_MASTER) {
+    log(`volume was ${Math.round(before * 100)}% – raised to ${Math.round(MIN_MASTER * 100)}% so the random tone is audible`);
+  }
   state.activeSlot = null;
   state.pendingSlot = null;
   send(encodePreset(tone, nextMsgNum()), `random "${tone.name}"`);
@@ -328,7 +338,7 @@ function renderTone() {
   if (amp?.parameters[AMP_PARAM.master] !== undefined) {
     const volume = parameterSlider(amp.name, AMP_SLOT, AMP_PARAM.master, amp.parameters[AMP_PARAM.master]);
     volume.classList.add("volume");
-    volume.querySelector("span").textContent = "volume";
+    markVolume(volume, amp.parameters[AMP_PARAM.master]);
     ui.sliders.append(volume);
   }
 
@@ -408,6 +418,13 @@ function effectRow(pedal, slotIndex) {
   return row;
 }
 
+// The master volume row says so when it is turned down far enough to sound broken.
+function markVolume(row, value) {
+  const low = value < 0.15;
+  row.classList.toggle("low", low);
+  row.querySelector("span").textContent = low ? "volume – almost silent" : "volume";
+}
+
 function parameterSlider(effectName, slotIndex, param, value) {
   const row = document.createElement("label");
   row.className = "slider";
@@ -420,6 +437,7 @@ function parameterSlider(effectName, slotIndex, param, value) {
     const v = Number(input.value);
     out.textContent = Math.round(v * 100);
     sendParameter(slotIndex, param, v);
+    if (row.classList.contains("volume")) markVolume(row, v);
     ui.revert.hidden = !hasChanges();
   });
   return row;

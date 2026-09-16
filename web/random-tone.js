@@ -7,12 +7,15 @@ import { AMP_SLOT, AMP_PARAM, PEDAL_COUNT } from "./spark-preset.js";
 // The J.H. (Hendrix) gear is a paid in-app purchase: included only if you own it.
 const isPaid = (fx) => fx.tech.startsWith("JH.");
 
+// Quietest master volume a random tone is allowed to use (bedroom level on a Spark 40).
+export const MIN_MASTER = 0.25;
+
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
 const between = (min, max) => Math.round((min + Math.random() * (max - min)) * 100) / 100;
 
 // How often each slot is switched on, and the range its knobs are randomised within.
 const SLOT_RULES = [
-  { chance: 0.5, min: 0.1, max: 0.4 },  // 0 noise gate
+  { chance: 0.5, min: 0.05, max: 0.25 }, // 0 noise gate (high thresholds cut sustain)
   { chance: 0.3, min: 0.3, max: 0.7 },  // 1 compressor
   { chance: 0.6, min: 0.25, max: 0.75 }, // 2 drive
   { chance: 1.0, min: 0.35, max: 0.75 }, // 3 amp (always on)
@@ -40,7 +43,10 @@ export function randomTone(baseTone, counter = 1, { includePaid = true } = {}) {
       parameters[AMP_PARAM.treble] = between(0.35, 0.7);
       parameters[AMP_PARAM.mid] = between(0.35, 0.7);
       parameters[AMP_PARAM.bass] = between(0.35, 0.7);
-      parameters[AMP_PARAM.master] = baseTone?.pedals?.[AMP_SLOT]?.parameters?.[AMP_PARAM.master] ?? 0.6;
+      // Follow the volume you were playing at, but never go so quiet that the
+      // random tone can't be heard – then it looks like nothing changed.
+      const inherited = baseTone?.pedals?.[AMP_SLOT]?.parameters?.[AMP_PARAM.master] ?? 0.6;
+      parameters[AMP_PARAM.master] = Math.max(MIN_MASTER, inherited);
     }
     pedals.push({ name, isOn: Math.random() < rule.chance, parameters });
   }

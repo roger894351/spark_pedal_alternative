@@ -82,6 +82,8 @@
     .slider { display: grid; grid-template-columns: 76px 1fr 34px; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 13px; color: var(--muted); }
     .slider.volume { margin-bottom: 12px; font-size: 14px; color: var(--text); }
     .slider.volume input { height: 26px; }
+    .slider.volume.low span { color: #ff6b6b; font-weight: 600; }
+    .slider.volume.low input { accent-color: #ff6b6b; }
     .slider input { width: 100%; accent-color: var(--accent); }
     .slider output { text-align: right; font: 12px ui-monospace, Menlo, monospace; color: var(--text); }
     #effects { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
@@ -232,6 +234,6 @@
       <pre id="log"></pre>
     </details>
   </main>
-  <script type="module" src="app.js?v=6"></script>
+  <script type="module" src="app.js?v=9"></script>
 </body>
 </html>

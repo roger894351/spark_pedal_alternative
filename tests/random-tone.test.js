@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { randomTone } from "../web/random-tone.js";
+import { randomTone, MIN_MASTER } from "../web/random-tone.js";
 import { encodePreset, decodePreset, PEDAL_COUNT, AMP_SLOT, AMP_PARAM } from "../web/spark-preset.js";
 import { SparkReader, describe as describeMsg } from "../web/spark-protocol.js";
 import { fxInfo } from "../web/fx-catalog.js";
@@ -39,4 +39,16 @@ test("Hendrix gear is included by default and can be switched off", () => {
   assert.ok(free.every((t) => t.pedals.every((p) => !p.name.startsWith("JH."))), "opt-out must exclude paid gear");
   const any = Array.from({ length: 300 }, (_, i) => randomTone(BASE, i));
   assert.ok(any.some((t) => t.pedals.some((p) => p.name.startsWith("JH."))), "default should allow paid gear");
+});
+
+test("a random tone is never left inaudible", () => {
+  const quiet = structuredClone(BASE);
+  quiet.pedals[AMP_SLOT].parameters[AMP_PARAM.master] = 0.05;
+  const tone = randomTone(quiet, 1);
+  assert.ok(tone.pedals[AMP_SLOT].parameters[AMP_PARAM.master] >= MIN_MASTER,
+    "a near-silent master volume must not be carried into a random tone");
+  // A volume the player can actually hear is kept as it is.
+  const loud = structuredClone(BASE);
+  loud.pedals[AMP_SLOT].parameters[AMP_PARAM.master] = 0.72;
+  assert.equal(randomTone(loud, 1).pedals[AMP_SLOT].parameters[AMP_PARAM.master], 0.72);
 });
