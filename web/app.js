@@ -1,15 +1,16 @@
 import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, SparkReader, describe, hex,
-} from "./spark-protocol.js?v=5";
+} from "./spark-protocol.js?v=6";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=5";
-import * as library from "./library.js?v=5";
-import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=5";
+} from "./spark-preset.js?v=6";
+import * as library from "./library.js?v=6";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=6";
+import { randomTone } from "./random-tone.js?v=6";
 
-const APP_VERSION = "v5";
+const APP_VERSION = "v6";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -20,6 +21,11 @@ const KEYMAP = {
   Digit2: { slot: 2 }, Numpad2: { slot: 2 },
   Digit3: { slot: 3 }, Numpad3: { slot: 3 },
   Digit4: { slot: 4 }, Numpad4: { slot: 4 },
+  Digit5: { slot: 5 }, Numpad5: { slot: 5 },
+  Digit6: { slot: 6 }, Numpad6: { slot: 6 },
+  Digit7: { slot: 7 }, Numpad7: { slot: 7 },
+  Digit8: { slot: 8 }, Numpad8: { slot: 8 },
+  KeyR: { random: true },
   ArrowLeft: { step: -1 }, ArrowUp: { step: -1 }, PageUp: { step: -1 },
   ArrowRight: { step: 1 }, ArrowDown: { step: 1 }, PageDown: { step: 1 },
   BracketLeft: { bank: -1 }, BracketRight: { bank: 1 },
@@ -42,8 +48,7 @@ const ui = {
   status: $("status"), statusText: $("status-text"),
   hint: $("hint"), unsupported: $("unsupported"),
   slots: [...document.querySelectorAll(".preset")],
-  modeAmp: $("mode-amp"), modeLibrary: $("mode-library"),
-  bankRow: $("bank-row"), bankLabel: $("bank-label"),
+  bankRow: $("bank-row"), bankLabel: $("bank-label"), random: $("random"),
   bankPrev: $("bank-prev"), bankNext: $("bank-next"),
   tonePanel: $("tone-panel"), toneName: $("tone-name"), revert: $("revert"),
   sliders: $("sliders"), effects: $("effects"),
@@ -54,8 +59,8 @@ const ui = {
 
 const state = {
   device: null, writeChar: null, connected: false, userDisconnected: false,
-  mode: "amp", // "amp" = the amp's own 4 presets, "library" = our own tones
-  activeSlot: null, pendingSlot: null,
+  activeSlot: null, pendingSlot: null, // 1–4 = the amp's presets, 5–8 = the current bank of my tones
+  randomCount: 0, preRandom: null,
   bank: 0,
   tones: library.load(),
   tone: null, // the tone currently loaded on the amp, as reported by it
@@ -104,24 +109,44 @@ function send(blocks, label) {
 
 // ---------- tone selection ----------
 
-const slotTone = (n) => library.bankSlots(state.tones, state.bank)[n - 1];
+const AMP_SLOTS = 4;
+const TOTAL_SLOTS = 8;
+
+// Slots 1–4 are the amp's own presets; 5–8 are the current bank of my tones.
+const slotTone = (n) => library.bankSlots(state.tones, state.bank)[n - AMP_SLOTS - 1];
+const isAmpSlot = (n) => n <= AMP_SLOTS;
 
 function selectSlot(n) {
   if (!state.connected) return;
-  if (state.mode === "amp") {
+  if (isAmpSlot(n)) {
     state.pendingSlot = n;
     render();
     send(changeHardwarePreset(n, nextMsgNum()), `preset ${n}`);
+    // Ask for the tone straight away instead of waiting for the amp to announce the change.
+    send(getCurrentPreset(-1, nextMsgNum()), "get tone");
+    ui.toneName.textContent = "loading…";
   } else {
     const tone = slotTone(n);
     if (!tone) return;
     state.pendingSlot = n;
     render();
     send(encodePreset(tone, nextMsgNum()), `tone "${tone.name}"`);
-    setTone(structuredClone(tone));
+    setTone(structuredClone(tone)); // shown immediately; the amp confirms afterwards
   }
   clearTimeout(state.ackTimer);
   state.ackTimer = setTimeout(() => confirmSlot(n), ACK_TIMEOUT_MS);
+}
+
+function sendRandomTone() {
+  if (!state.connected) return;
+  state.preRandom = state.tone ? structuredClone(state.tone) : null;
+  const tone = randomTone(state.tone, ++state.randomCount);
+  state.activeSlot = null;
+  state.pendingSlot = null;
+  send(encodePreset(tone, nextMsgNum()), `random "${tone.name}"`);
+  setTone(tone);
+  render();
+  log(`random tone: ${tone.pedals.filter((p) => p.isOn).map((p) => displayName(p.name, p.parameters)).join(" + ")}`);
 }
 
 function confirmSlot(n) {
@@ -131,24 +156,19 @@ function confirmSlot(n) {
   render();
 }
 
+// Arrow keys scroll through all 8 slots, skipping empty ones.
 function stepSlot(step) {
-  const current = state.pendingSlot ?? state.activeSlot ?? 1;
-  selectSlot(((current - 1 + step + 4) % 4) + 1);
+  let n = state.pendingSlot ?? state.activeSlot ?? 1;
+  for (let i = 0; i < TOTAL_SLOTS; i++) {
+    n = ((n - 1 + step + TOTAL_SLOTS) % TOTAL_SLOTS) + 1;
+    if (isAmpSlot(n) || slotTone(n)) return selectSlot(n);
+  }
 }
 
 function stepBank(step) {
-  if (state.mode !== "library") return;
   const count = library.bankCount(state.tones);
   state.bank = (state.bank + step + count) % count;
   render();
-}
-
-function setMode(mode) {
-  state.mode = mode;
-  state.activeSlot = null;
-  state.pendingSlot = null;
-  render();
-  if (state.connected && mode === "amp") send(getCurrentPresetNumber(nextMsgNum()), "get preset");
 }
 
 // ---------- tone parameters (volume / EQ / effects) ----------
@@ -161,6 +181,14 @@ function setTone(tone, { keepBaseline = false } = {}) {
 
 // Undo every change made since the tone was loaded, sending only what actually differs.
 function revertTone() {
+  if (state.preRandom) {
+    const previous = state.preRandom;
+    state.preRandom = null;
+    send(encodePreset(previous, nextMsgNum()), `back to "${previous.name}"`);
+    setTone(structuredClone(previous));
+    log(`back to "${previous.name}"`);
+    return;
+  }
   const base = state.baseline;
   const tone = state.tone;
   if (!base || !tone) return;
@@ -231,20 +259,19 @@ function toggleEffect(slotIndex) {
 const escapeHtml = (str) => String(str).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 
 function render() {
-  const inLibrary = state.mode === "library";
-  ui.modeAmp.classList.toggle("selected", !inLibrary);
-  ui.modeLibrary.classList.toggle("selected", inLibrary);
-  ui.bankRow.hidden = !inLibrary;
-  if (inLibrary) ui.bankLabel.textContent = `Bank ${state.bank + 1} / ${library.bankCount(state.tones)}`;
+  ui.bankLabel.textContent = `My tones · bank ${state.bank + 1} / ${library.bankCount(state.tones)}`;
 
   ui.slots.forEach((btn) => {
     const n = Number(btn.dataset.preset);
-    const tone = inLibrary ? slotTone(n) : null;
-    btn.querySelector(".num").textContent = inLibrary ? (tone ? n : "–") : n;
-    btn.querySelector(".key").textContent = inLibrary ? (tone?.name ?? "empty") : `key ${n}`;
+    const amp = isAmpSlot(n);
+    const tone = amp ? null : slotTone(n);
+    btn.querySelector(".num").textContent = n;
+    btn.querySelector(".key").textContent = amp ? `amp preset ${n}` : (tone?.name ?? "empty");
+    btn.classList.toggle("amp-slot", amp);
+    btn.classList.toggle("mine", !amp);
     btn.classList.toggle("active", n === state.activeSlot);
     btn.classList.toggle("pending", n === state.pendingSlot && n !== state.activeSlot);
-    btn.disabled = !state.connected || (inLibrary && !tone);
+    btn.disabled = !state.connected || (!amp && !tone);
   });
 
   ui.libCount.textContent = `${state.tones.length} tone${state.tones.length === 1 ? "" : "s"}`;
@@ -283,7 +310,7 @@ function renderTone() {
     ui.sliders.append(volume);
   }
 
-  ui.revert.hidden = !hasChanges();
+  ui.revert.hidden = !hasChanges() && !state.preRandom;
 
   ui.effects.innerHTML = "";
   tone.pedals.forEach((pedal, i) => ui.effects.append(effectRow(pedal, i)));
@@ -394,13 +421,13 @@ function onNotification(event) {
       }
     } else if (info?.type === "preset") {
       log(`← amp preset: ${info.preset ?? "custom"}`);
-      if (state.mode === "amp" && info.preset) {
+      if (info.preset) {
         clearTimeout(state.ackTimer);
         state.activeSlot = info.preset;
         state.pendingSlot = null;
         render();
+        if (!state.pendingSlot) send(getCurrentPreset(-1, nextMsgNum()), "get tone");
       }
-      send(getCurrentPreset(-1, nextMsgNum()), "get tone");
     } else if (info?.type === "ack") {
       log(`← ack ${msg.subCmd.toString(16)}`);
       if (msg.subCmd === 0x38 || msg.subCmd === 0x01) confirmSlot(state.pendingSlot);
@@ -512,6 +539,7 @@ document.addEventListener("keydown", (e) => {
   else if (action.bank) stepBank(action.bank);
   else if (action.volume) nudgeVolume(action.volume);
   else if (action.revert) revertTone();
+  else if (action.random) sendRandomTone();
 });
 
 ui.connect.addEventListener("click", () => {
@@ -519,8 +547,7 @@ ui.connect.addEventListener("click", () => {
   else connect();
 });
 ui.connectAll.addEventListener("click", () => { if (!state.connected) connect({ allDevices: true }); });
-ui.modeAmp.addEventListener("click", () => setMode("amp"));
-ui.modeLibrary.addEventListener("click", () => setMode("library"));
+ui.random.addEventListener("click", sendRandomTone);
 ui.revert.addEventListener("click", revertTone);
 ui.bankPrev.addEventListener("click", () => stepBank(-1));
 ui.bankNext.addEventListener("click", () => stepBank(1));
@@ -536,9 +563,11 @@ ui.saveTone.addEventListener("click", () => {
   if (!state.tone) return;
   const name = prompt("Name for this tone:", state.tone.name)?.trim();
   if (!name) return;
-  state.tones.push({ ...structuredClone(state.tone), name });
+  state.tones.push({ ...structuredClone(state.tone), name, uuid: crypto.randomUUID().toUpperCase() });
   if (!library.save(state.tones)) showHint("Saved for this session only – browser storage is unavailable.");
-  setMode("library");
+  state.bank = library.bankCount(state.tones) - 1; // show the bank the new tone landed in
+  state.preRandom = null;
+  render();
 });
 
 ui.importFile.addEventListener("change", async () => {
@@ -556,7 +585,7 @@ ui.importFile.addEventListener("change", async () => {
   if (added) {
     library.save(state.tones);
     log(`imported ${added} tone(s)`);
-    setMode("library");
+    render();
   }
   ui.importFile.value = "";
 });
@@ -608,7 +637,10 @@ render();
 if (new URLSearchParams(location.search).has("demo")) {
   state.connected = true;
   state.activeSlot = 2;
-  state.openSlots.add(6);
+  state.tones = [
+    { name: "GnR Lead", pedals: [] }, { name: "Clean Jazzy", pedals: [] },
+    { name: "Blues Drive", pedals: [] }, { name: "Metal Rhythm", pedals: [] },
+  ];
   setStatus("connected", "Connected: Spark 40 BLE (demo)");
   setTone({
     name: "Ac Dc", pedals: [

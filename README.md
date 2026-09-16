@@ -7,8 +7,9 @@ KZZI K75 Pro (Bluetooth) ──► iPhone (Bluefy browser, this web app) ──�
 ```
 
 ## What it does
-- **Amp presets 1–4:** switch the amp's own saved presets.
-- **My tones:** unlimited tones of your own, in banks of 4. Selecting one sends the whole tone to the amp's temporary slot, so your 4 saved presets are untouched.
+- **8 slots on one screen:** keys `1`–`4` are the amp's own presets (blue), keys `5`–`8` are a bank of your own tones (orange). `[` and `]` swap which bank fills 5–8, so any number of tones stay two keys away.
+- **My tones:** unlimited tones of your own. Selecting one sends the whole tone to the amp's temporary slot, so your 4 saved presets are untouched.
+- **🎲 Random** (key `R`): builds a random amp + effects combination and sends it, for auditioning ideas. Tap **Undo** to go back, or **Save current tone** to keep it.
 - **Volume** is always visible; gain/treble/mid/bass live inside the (collapsed) Amp row.
 - **Effects:** each of the 7 slots is collapsed by default and can be switched on/off, **swapped for another model** (e.g. Booster → Fuzz Face, or one of the 9 reverb types), and **each of its knobs adjusted** with named sliders.
 - **Undo my changes:** one tap puts the tone back exactly as it was when loaded (key `0`).
@@ -17,9 +18,11 @@ KZZI K75 Pro (Bluetooth) ──► iPhone (Bluefy browser, this web app) ──�
 ## Keys
 | Key                         | Action          |
 |-----------------------------|-----------------|
-| `1` `2` `3` `4`             | Preset 1–4      |
-| `←` `↑` `Page Up`           | Previous preset |
-| `→` `↓` `Page Down`         | Next preset     |
+| `1`–`4`                     | Amp presets 1–4 |
+| `5`–`8`                     | My tones in the current bank |
+| `R`                         | Random tone     |
+| `←` `↑` `Page Up`           | Previous slot (scrolls all 8) |
+| `→` `↓` `Page Down`         | Next slot       |
 | `[` `]`                     | Previous / next bank (My tones) |
 | `-` `=`                     | Volume down / up |
 | `0`                         | Undo changes to the current tone |
@@ -52,7 +55,7 @@ Open **https://roger894351.github.io/spark_pedal_alternative/** in Bluefy. It's 
 | Problem                                  | Fix                                                                 |
 |------------------------------------------|---------------------------------------------------------------------|
 | Amp not listed when connecting           | Close the page on other devices (Mac Chrome) and the Spark app; forget "Spark 40 BLE" in iPhone Settings → Bluetooth; power-cycle the amp; try **Show all devices** |
-| Old version still showing                | The log header should say `v5`; pull down to reload in Bluefy          |
+| Old version still showing                | The log header should say `v6`; pull down to reload in Bluefy          |
 | "Bluetooth not available in this browser" | Use Bluefy (iPhone) or Chrome (Mac/Android); page must be HTTPS or localhost |
 | Connected, but keys do nothing           | Tap an empty area of the page once so it has focus; check the keyboard is in BT mode |
 | Preset button stays yellow / other errors | Open **Bluetooth log** at the bottom, tap **Copy log**, and share it   |
@@ -60,5 +63,5 @@ Open **https://roger894351.github.io/spark_pedal_alternative/** in Bluefy. It's 
 ## Development
 - `npm test` runs the protocol, tone-encoder and decoder tests (Node 18+).
 - `web/index.html?demo=1` renders the UI with a sample tone and no Bluetooth, for screenshots.
-- `web/spark-protocol.js` has the message format (see [PLAN.md](PLAN.md) section 2); `web/spark-preset.js` encodes/decodes whole tones; `web/library.js` stores them; `web/fx-catalog.js` is generated from Ignitron's FX reference (effect names and knob labels).
+- `web/spark-protocol.js` has the message format (see [PLAN.md](PLAN.md) section 2); `web/spark-preset.js` encodes/decodes whole tones; `web/library.js` stores them; `web/fx-catalog.js` is generated from Ignitron's FX reference (effect names and knob labels); `web/random-tone.js` builds random combinations.
 - Protocol reference: [Ignitron](https://github.com/stangreg/Ignitron) (BSD-3) and [paulhamsh/Spark](https://github.com/paulhamsh/Spark).

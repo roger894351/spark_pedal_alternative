@@ -14,6 +14,7 @@
       --text: #eceef1;
       --muted: #8b919a;
       --accent: #ff7a1a;
+      --amp: #4aa8ff;
       --ok: #3ecf8e;
       --warn: #f5c542;
       --bad: #ef5b5b;
@@ -71,7 +72,7 @@
     .modes { display: flex; gap: 8px; }
     .modes button { padding: 8px 14px; font-size: 14px; }
     .modes button.selected { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
-    #bank-row { display: flex; align-items: center; justify-content: center; gap: 16px; }
+    #bank-row { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; }
     #bank-row button { padding: 8px 18px; font-size: 18px; }
     #bank-label { font-size: 14px; color: var(--muted); min-width: 110px; text-align: center; }
     .preset .key { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px; }
@@ -109,11 +110,9 @@
     .lib-actions input[type=file] { font-size: 12px; color: var(--muted); max-width: 100%; }
 
     .grid {
-      flex: 1;
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-      min-height: 320px;
+      gap: 10px;
     }
     .preset {
       display: flex;
@@ -125,12 +124,21 @@
       transition: background .08s, border-color .08s, transform .08s;
     }
     .preset:active { transform: scale(.98); }
-    .preset .num { font-size: clamp(48px, 16vw, 96px); font-weight: 700; line-height: 1; }
+    .preset { min-height: 78px; padding: 8px 4px; }
+    .preset .num { font-size: clamp(26px, 8vw, 40px); font-weight: 700; line-height: 1; }
     .preset .key { font-size: 13px; color: var(--muted); }
     .preset:disabled { opacity: .35; }
     .preset.pending { border-color: var(--warn); }
-    .preset.active { background: var(--accent); border-color: var(--accent); color: #111; }
-    .preset.active .key { color: #3a2410; }
+    /* Two families: the amp's own presets (blue) and my saved tones (orange). */
+    .preset.amp-slot { border-color: color-mix(in srgb, var(--amp) 45%, var(--line)); }
+    .preset.amp-slot .num { color: var(--amp); }
+    .preset.amp-slot.active { background: var(--amp); border-color: var(--amp); }
+    .preset.mine { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+    .preset.mine .num { color: var(--accent); }
+    .preset.mine.active { background: var(--accent); border-color: var(--accent); }
+    .preset.active { color: #111; }
+    .preset.active .num { color: #111; }
+    .preset.active .key { color: #201206; }
 
     .help { font-size: 14px; color: var(--muted); }
     .help kbd {
@@ -168,22 +176,22 @@
       <p>Mac/PC/Android: use <strong>Google Chrome</strong>.</p>
     </div>
 
-    <div class="modes">
-      <button id="mode-amp" class="selected" type="button">Amp presets 1–4</button>
-      <button id="mode-library" type="button">My tones</button>
-    </div>
-
-    <div id="bank-row" hidden>
+    <div id="bank-row">
       <button id="bank-prev" type="button">‹</button>
-      <span id="bank-label">Bank 1 / 1</span>
+      <span id="bank-label">My tones · bank 1 / 1</span>
       <button id="bank-next" type="button">›</button>
+      <button id="random" class="link" type="button">🎲 Random</button>
     </div>
 
     <section class="grid">
-      <button class="preset" type="button" data-preset="1"><span class="num">1</span><span class="key">key 1</span></button>
-      <button class="preset" type="button" data-preset="2"><span class="num">2</span><span class="key">key 2</span></button>
-      <button class="preset" type="button" data-preset="3"><span class="num">3</span><span class="key">key 3</span></button>
-      <button class="preset" type="button" data-preset="4"><span class="num">4</span><span class="key">key 4</span></button>
+      <button class="preset" type="button" data-preset="1"><span class="num">1</span><span class="key"></span></button>
+      <button class="preset" type="button" data-preset="2"><span class="num">2</span><span class="key"></span></button>
+      <button class="preset" type="button" data-preset="3"><span class="num">3</span><span class="key"></span></button>
+      <button class="preset" type="button" data-preset="4"><span class="num">4</span><span class="key"></span></button>
+      <button class="preset" type="button" data-preset="5"><span class="num">5</span><span class="key"></span></button>
+      <button class="preset" type="button" data-preset="6"><span class="num">6</span><span class="key"></span></button>
+      <button class="preset" type="button" data-preset="7"><span class="num">7</span><span class="key"></span></button>
+      <button class="preset" type="button" data-preset="8"><span class="num">8</span><span class="key"></span></button>
     </section>
 
     <section id="tone-panel" hidden>
@@ -205,7 +213,8 @@
     </details>
 
     <p class="help">
-      Keyboard: <kbd>1</kbd>–<kbd>4</kbd> select preset ·
+      Keyboard: <kbd>1</kbd>–<kbd>4</kbd> amp presets · <kbd>5</kbd>–<kbd>8</kbd> my tones ·
+      <kbd>R</kbd> random tone ·
       <kbd>←</kbd>/<kbd>↑</kbd>/<kbd>PgUp</kbd> previous ·
       <kbd>→</kbd>/<kbd>↓</kbd>/<kbd>PgDn</kbd> next ·
       <kbd>[</kbd>/<kbd>]</kbd> bank · <kbd>-</kbd>/<kbd>=</kbd> volume · <kbd>0</kbd> undo changes.
@@ -219,6 +228,6 @@
       <pre id="log"></pre>
     </details>
   </main>
-  <script type="module" src="app.js?v=5"></script>
+  <script type="module" src="app.js?v=6"></script>
 </body>
 </html>
