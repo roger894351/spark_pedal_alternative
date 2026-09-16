@@ -1,16 +1,16 @@
 import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, SparkReader, describe, hex,
-} from "./spark-protocol.js?v=9";
+} from "./spark-protocol.js?v=10";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=9";
-import * as library from "./library.js?v=9";
-import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=9";
-import { randomTone, MIN_MASTER } from "./random-tone.js?v=9";
+} from "./spark-preset.js?v=10";
+import * as library from "./library.js?v=10";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=10";
+import { randomTone, MIN_MASTER } from "./random-tone.js?v=10";
 
-const APP_VERSION = "v9";
+const APP_VERSION = "v10";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -67,6 +67,7 @@ const state = {
   tone: null, // the tone currently loaded on the amp, as reported by it
   baseline: null, // that tone as first loaded, for "undo my changes"
   msgNum: 0, ackTimer: null, wakeLock: null, sliderTimer: null, lastToneRequest: 0,
+  activatePending: false, activateTimer: null,
   openSlots: new Set(),
 };
 
@@ -133,11 +134,30 @@ function selectSlot(n) {
     state.preRandom = null; // loading a real tone ends the random audition
     state.pendingSlot = n;
     render();
-    send(encodePreset(tone, nextMsgNum()), `tone "${tone.name}"`);
+    sendTone(tone, `tone "${tone.name}"`);
     setTone(structuredClone(tone)); // shown immediately; the amp confirms afterwards
   }
   clearTimeout(state.ackTimer);
   state.ackTimer = setTimeout(() => confirmSlot(n), ACK_TIMEOUT_MS);
+}
+
+// A tone we send lands in the amp's temporary slot 0x7F. The amp stores it but keeps
+// playing the preset it was on until it is told to select that slot — same two-step
+// sequence Ignitron uses (send preset, then on the final ack select preset 128 = 0x7F).
+const TEMP_PRESET = 128;
+
+function sendTone(tone, label) {
+  send(encodePreset(tone, nextMsgNum()), label);
+  state.activatePending = true;
+  clearTimeout(state.activateTimer);
+  state.activateTimer = setTimeout(activateSentTone, 900); // in case the ack never arrives
+}
+
+function activateSentTone() {
+  if (!state.activatePending) return;
+  state.activatePending = false;
+  clearTimeout(state.activateTimer);
+  send(changeHardwarePreset(TEMP_PRESET, nextMsgNum()), "play sent tone");
 }
 
 function sendRandomTone() {
@@ -154,7 +174,7 @@ function sendRandomTone() {
   }
   state.activeSlot = null;
   state.pendingSlot = null;
-  send(encodePreset(tone, nextMsgNum()), `random "${tone.name}"`);
+  sendTone(tone, `random "${tone.name}"`);
   setTone(tone);
   render();
   log(`random tone: ${tone.pedals.filter((p) => p.isOn).map((p) => displayName(p.name, p.parameters)).join(" + ")}`);
@@ -204,7 +224,7 @@ function revertTone() {
   if (state.preRandom) {
     const previous = state.preRandom;
     state.preRandom = null;
-    send(encodePreset(previous, nextMsgNum()), `back to "${previous.name}"`);
+    sendTone(previous, `back to "${previous.name}"`);
     setTone(structuredClone(previous));
     log(`back to "${previous.name}"`);
     return;
@@ -470,6 +490,7 @@ function onNotification(event) {
       }
     } else if (info?.type === "ack") {
       log(`← ack ${msg.subCmd.toString(16)}`);
+      if (msg.subCmd === 0x01 && state.activatePending) activateSentTone();
       if (msg.subCmd === 0x38 || msg.subCmd === 0x01) confirmSlot(state.pendingSlot);
     } else {
       log(`← cmd ${msg.cmd.toString(16)} ${msg.subCmd.toString(16)} (${msg.data.length} bytes)`);

@@ -60,3 +60,9 @@ test("reader reports ack", () => {
   const [msg] = reader.push(block);
   assert.deepEqual(describe(msg), { type: "ack", subCmd: 0x38 });
 });
+
+test("preset 128 selects the amp's temporary slot 0x7F", () => {
+  // Ignitron sends this after a full tone so the amp actually plays what it received.
+  const [block] = changeHardwarePreset(128, 1);
+  assert.ok(hex(block).endsWith("01 38 00 00 7F F7"), hex(block)); // 7-bit high byte, then 00 7F
+});

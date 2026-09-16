@@ -164,6 +164,7 @@ Two ways to do it:
 - [x] Phase 2c (v5): reverb type picker, collapsed layout (volume only on top), strict tone reassembly + validation after a garbled tone name appeared in the log
 - [x] Phase 2e (v7): edits no longer bounce back to the stored preset (the app keeps the live tone and pushes knob values after a model swap), "· edited" marker; v8 makes Hendrix gear in random a remembered option (default on)
 - [x] Phase 2d (v6): 8 colour-coded slots (4 amp presets + 4 of my tones, banks via [ ]), arrow scrolling across all 8, 🎲 random tone generator, faster tone-name refresh
+- [x] Phase 2f (v9/v10): random tones never inherit a near-silent volume (floor 25%) and the volume row warns below 15%; **v10 fixes the real bug** – a tone sent with command `01 01` lands in the amp's temporary slot `0x7F` and is only heard after `01 38 00 7F` (select preset 128). Ignitron does this on the final `04 01` ack (`SparkDataControl::handleIncomingAck`, `customPresetNumberChangePending`). Without it the amp acks the tone and keeps playing the old preset.
 - [ ] Phase 3 ESP32 pedal – build spec v2 in ESP32_CONTROLLER.md (Ignitron + 3D-printed case, no drilling, USB power bank, keyboard mode for Anki); next: order parts
 
 ## 7. References
