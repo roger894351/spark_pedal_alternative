@@ -19,6 +19,7 @@ test("random tones are valid and keep a steady volume", () => {
       assert.ok(info, `unknown effect ${pedal.name}`);
       assert.equal(pedal.parameters.length, info.params.length);
       assert.ok(pedal.parameters.every((v) => v >= 0 && v <= 1), "knobs stay in range");
+      assert.ok(!pedal.name.startsWith("JH."), "paid Hendrix gear stays out of random tones");
     }
   }
 });

@@ -9,7 +9,7 @@ KZZI K75 Pro (Bluetooth) ──► iPhone (Bluefy browser, this web app) ──�
 ## What it does
 - **8 slots on one screen:** keys `1`–`4` are the amp's own presets (blue), keys `5`–`8` are a bank of your own tones (orange). `[` and `]` swap which bank fills 5–8, so any number of tones stay two keys away.
 - **My tones:** unlimited tones of your own. Selecting one sends the whole tone to the amp's temporary slot, so your 4 saved presets are untouched.
-- **🎲 Random** (key `R`): builds a random amp + effects combination and sends it, for auditioning ideas. Tap **Undo** to go back, or **Save current tone** to keep it.
+- **🎲 Random** (key `R`): builds a random amp + effects combination and sends it, for auditioning ideas. Paid Hendrix gear is left out, and the volume follows the previous tone. Tap **Undo** to go back, or **Save current tone** to keep it.
 - **Volume** is always visible; gain/treble/mid/bass live inside the (collapsed) Amp row.
 - **Effects:** each of the 7 slots is collapsed by default and can be switched on/off, **swapped for another model** (e.g. Booster → Fuzz Face, or one of the 9 reverb types), and **each of its knobs adjusted** with named sliders.
 - **Undo my changes:** one tap puts the tone back exactly as it was when loaded (key `0`).
@@ -55,7 +55,7 @@ Open **https://roger894351.github.io/spark_pedal_alternative/** in Bluefy. It's 
 | Problem                                  | Fix                                                                 |
 |------------------------------------------|---------------------------------------------------------------------|
 | Amp not listed when connecting           | Close the page on other devices (Mac Chrome) and the Spark app; forget "Spark 40 BLE" in iPhone Settings → Bluetooth; power-cycle the amp; try **Show all devices** |
-| Old version still showing                | The log header should say `v6`; pull down to reload in Bluefy          |
+| Old version still showing                | The log header should say `v7`; pull down to reload in Bluefy          |
 | "Bluetooth not available in this browser" | Use Bluefy (iPhone) or Chrome (Mac/Android); page must be HTTPS or localhost |
 | Connected, but keys do nothing           | Tap an empty area of the page once so it has focus; check the keyboard is in BT mode |
 | Preset button stays yellow / other errors | Open **Bluetooth log** at the bottom, tap **Copy log**, and share it   |

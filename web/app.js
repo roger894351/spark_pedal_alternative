@@ -1,16 +1,16 @@
 import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, SparkReader, describe, hex,
-} from "./spark-protocol.js?v=6";
+} from "./spark-protocol.js?v=7";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=6";
-import * as library from "./library.js?v=6";
-import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=6";
-import { randomTone } from "./random-tone.js?v=6";
+} from "./spark-preset.js?v=7";
+import * as library from "./library.js?v=7";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=7";
+import { randomTone } from "./random-tone.js?v=7";
 
-const APP_VERSION = "v6";
+const APP_VERSION = "v7";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -65,7 +65,7 @@ const state = {
   tones: library.load(),
   tone: null, // the tone currently loaded on the amp, as reported by it
   baseline: null, // that tone as first loaded, for "undo my changes"
-  msgNum: 0, ackTimer: null, wakeLock: null, sliderTimer: null,
+  msgNum: 0, ackTimer: null, wakeLock: null, sliderTimer: null, lastToneRequest: 0,
   openSlots: new Set(),
 };
 
@@ -123,7 +123,7 @@ function selectSlot(n) {
     render();
     send(changeHardwarePreset(n, nextMsgNum()), `preset ${n}`);
     // Ask for the tone straight away instead of waiting for the amp to announce the change.
-    send(getCurrentPreset(-1, nextMsgNum()), "get tone");
+    requestTone();
     ui.toneName.textContent = "loading…";
   } else {
     const tone = slotTone(n);
@@ -173,6 +173,15 @@ function stepBank(step) {
 
 // ---------- tone parameters (volume / EQ / effects) ----------
 
+// The amp only reports its *stored* preset, so asking for the tone after an edit would
+// overwrite what's actually playing. Only ask when the amp itself changed preset.
+function requestTone(reason = "get tone") {
+  const now = Date.now();
+  if (now - state.lastToneRequest < 1500) return;
+  state.lastToneRequest = now;
+  send(getCurrentPreset(-1, nextMsgNum()), reason);
+}
+
 function setTone(tone, { keepBaseline = false } = {}) {
   state.tone = tone;
   if (!keepBaseline) state.baseline = structuredClone(tone);
@@ -219,10 +228,22 @@ function swapEffect(slotIndex, newName) {
   const pedal = state.tone?.pedals?.[slotIndex];
   if (!pedal || pedal.name === newName) return;
   send(changeEffect(pedal.name, newName, nextMsgNum()), `${SLOT_LABELS[slotIndex]} → ${newName}`);
+
+  // The amp gives the new effect its own settings. Rather than re-reading the tone
+  // (the amp would answer with its stored preset and undo the edits), keep the knob
+  // values we had where they line up and push them to the amp.
+  const info = fxInfo(newName);
+  const count = info?.params?.length ?? pedal.parameters.length;
+  const previous = pedal.parameters;
   pedal.name = newName;
+  pedal.parameters = Array.from({ length: count }, (_, p) => {
+    if (info?.selector === p) return previous[p] ?? 0;
+    return previous[p] ?? 0.5;
+  });
+  pedal.parameters.forEach((value, p) => {
+    send(changeEffectParameter(newName, p, value, nextMsgNum()), `${newName} p${p}=${value.toFixed(2)}`);
+  });
   renderTone();
-  // The amp loads that effect's own settings, so ask for the tone again.
-  setTimeout(() => send(getCurrentPreset(-1, nextMsgNum()), "get tone"), 400);
 }
 
 const ampPedal = () => state.tone?.pedals?.[AMP_SLOT] ?? null;
@@ -299,7 +320,7 @@ function renderTone() {
   const tone = state.tone;
   ui.tonePanel.hidden = !tone;
   if (!tone) return;
-  ui.toneName.textContent = tone.name;
+  ui.toneName.textContent = tone.name + (hasChanges() || state.preRandom ? " · edited" : "");
 
   const amp = ampPedal();
   ui.sliders.innerHTML = "";
@@ -417,7 +438,7 @@ function onNotification(event) {
         setTone(tone);
       } catch (err) {
         log(`tone decode failed (${err.message}) – asking again`);
-        setTimeout(() => send(getCurrentPreset(-1, nextMsgNum()), "get tone"), 500);
+        setTimeout(() => requestTone("get tone (retry)"), 600);
       }
     } else if (info?.type === "preset") {
       log(`← amp preset: ${info.preset ?? "custom"}`);
@@ -426,7 +447,7 @@ function onNotification(event) {
         state.activeSlot = info.preset;
         state.pendingSlot = null;
         render();
-        if (!state.pendingSlot) send(getCurrentPreset(-1, nextMsgNum()), "get tone");
+        requestTone();
       }
     } else if (info?.type === "ack") {
       log(`← ack ${msg.subCmd.toString(16)}`);
@@ -456,7 +477,7 @@ async function openGatt() {
   render();
   requestWakeLock();
   send(getCurrentPresetNumber(nextMsgNum()), "get preset");
-  send(getCurrentPreset(-1, nextMsgNum()), "get tone");
+  requestTone();
 }
 
 async function connect({ allDevices = false } = {}) {
