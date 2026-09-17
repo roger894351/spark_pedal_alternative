@@ -1,16 +1,16 @@
 import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, SparkReader, describe, hex,
-} from "./spark-protocol.js?v=10";
+} from "./spark-protocol.js?v=11";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=10";
-import * as library from "./library.js?v=10";
-import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=10";
-import { randomTone, MIN_MASTER } from "./random-tone.js?v=10";
+} from "./spark-preset.js?v=11";
+import * as library from "./library.js?v=11";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=11";
+import { randomTone, MIN_MASTER } from "./random-tone.js?v=11";
 
-const APP_VERSION = "v10";
+const APP_VERSION = "v11";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -67,7 +67,7 @@ const state = {
   tone: null, // the tone currently loaded on the amp, as reported by it
   baseline: null, // that tone as first loaded, for "undo my changes"
   msgNum: 0, ackTimer: null, wakeLock: null, sliderTimer: null, lastToneRequest: 0,
-  activatePending: false, activateTimer: null,
+  pendingTone: null, activateTimer: null,
   openSlots: new Set(),
 };
 
@@ -91,20 +91,32 @@ const showHint = (text) => { ui.hint.textContent = text ?? ""; ui.hint.hidden = 
 
 const nextMsgNum = () => (state.msgNum = (state.msgNum % 0x7f) + 1);
 
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+
+// Gap between the blocks of one tone. Ignitron's BLE code notes the same thing:
+// "Delay seems to be required in order to not lose any packages."
+const BLOCK_GAP_MS = 30;
+
 // GATT operations must not overlap, so all writes go through one queue.
-function send(blocks, label) {
+//
+// Single-block commands (preset change, one knob, one effect) go out fast, with no
+// response — they have always worked. A whole tone is 3–4 blocks, and those must not
+// use writeValueWithoutResponse: it has no flow control, so the amp drops the tail of
+// the burst. It then acks only the chunks it received and never sends the final 04 01,
+// which is why sent tones — random tones and My tones alike — appeared to do nothing.
+function send(blocks, label, { paced = blocks.length > 1 } = {}) {
   if (!state.writeChar) return Promise.resolve();
   writeQueue = writeQueue.then(async () => {
-    for (const block of blocks) {
+    const props = state.writeChar.properties ?? {};
+    const fast = !paced && props.writeWithoutResponse && state.writeChar.writeValueWithoutResponse;
+    for (const [i, block] of blocks.entries()) {
       if (blocks.length <= 2) log(`→ ${label}: ${hex(block)}`);
-      const props = state.writeChar.properties ?? {};
-      if (props.writeWithoutResponse && state.writeChar.writeValueWithoutResponse) {
-        await state.writeChar.writeValueWithoutResponse(block);
-      } else {
-        await state.writeChar.writeValue(block);
-      }
+      if (fast) await state.writeChar.writeValueWithoutResponse(block);
+      else if (props.write) await state.writeChar.writeValue(block);
+      else await state.writeChar.writeValueWithoutResponse(block);
+      if (paced && i < blocks.length - 1) await sleep(BLOCK_GAP_MS);
     }
-    if (blocks.length > 2) log(`→ ${label}: ${blocks.length} blocks`);
+    if (blocks.length > 2) log(`→ ${label}: ${blocks.length} blocks, ${blocks.chunks} chunks`);
   }).catch((err) => log(`write failed: ${err.message}`));
   return writeQueue;
 }
@@ -146,17 +158,38 @@ function selectSlot(n) {
 // sequence Ignitron uses (send preset, then on the final ack select preset 128 = 0x7F).
 const TEMP_PRESET = 128;
 
-function sendTone(tone, label) {
-  send(encodePreset(tone, nextMsgNum()), label);
-  state.activatePending = true;
+const TONE_ACK_TIMEOUT_MS = 1500;
+
+function sendTone(tone, label, tries = 0) {
+  const blocks = encodePreset(tone, nextMsgNum());
+  state.pendingTone = { tone, label, tries, chunks: blocks.chunks, acked: 0 };
+  send(blocks, label);
   clearTimeout(state.activateTimer);
-  state.activateTimer = setTimeout(activateSentTone, 900); // in case the ack never arrives
+  state.activateTimer = setTimeout(toneTimedOut, TONE_ACK_TIMEOUT_MS);
 }
 
+// The amp acks each chunk it accepted with 05 01, then the whole tone with 04 01.
+const noteChunkAck = () => { if (state.pendingTone) state.pendingTone.acked++; };
+
 function activateSentTone() {
-  if (!state.activatePending) return;
-  state.activatePending = false;
+  if (!state.pendingTone) return;
+  state.pendingTone = null;
   clearTimeout(state.activateTimer);
+  send(changeHardwarePreset(TEMP_PRESET, nextMsgNum()), "play sent tone");
+}
+
+// No final ack means blocks went missing. Resend once rather than switching to a
+// half-written tone — that silent failure is what made sent tones look like no-ops.
+function toneTimedOut() {
+  const pending = state.pendingTone;
+  if (!pending) return;
+  state.pendingTone = null;
+  log(`${pending.label}: only ${pending.acked}/${pending.chunks} chunks confirmed`);
+  if (pending.tries < 1) {
+    sendTone(pending.tone, `${pending.label} (resend)`, pending.tries + 1);
+    return;
+  }
+  log("amp never confirmed the tone – playing it anyway");
   send(changeHardwarePreset(TEMP_PRESET, nextMsgNum()), "play sent tone");
 }
 
@@ -490,8 +523,11 @@ function onNotification(event) {
       }
     } else if (info?.type === "ack") {
       log(`← ack ${msg.subCmd.toString(16)}`);
-      if (msg.subCmd === 0x01 && state.activatePending) activateSentTone();
+      if (msg.subCmd === 0x01) activateSentTone();
       if (msg.subCmd === 0x38 || msg.subCmd === 0x01) confirmSlot(state.pendingSlot);
+    } else if (msg.cmd === 0x05 && msg.subCmd === 0x01) {
+      noteChunkAck(); // one chunk of a tone accepted
+      log(`← chunk ok${state.pendingTone ? ` (${state.pendingTone.acked}/${state.pendingTone.chunks})` : ""}`);
     } else {
       log(`← cmd ${msg.cmd.toString(16)} ${msg.subCmd.toString(16)} (${msg.data.length} bytes)`);
     }

@@ -52,7 +52,8 @@ const xorChecksum = (bytes) => bytes.reduce((acc, b) => acc ^ b, 0);
 // Build the list of BLE blocks (Uint8Array) to write to FFC1.
 export function buildMessage(cmd, subCmd, payload = [], msgNum = 1) {
   const stream = [];
-  for (const chunk of splitToChunks(payload)) {
+  const parts = splitToChunks(payload);
+  for (const chunk of parts) {
     const data7 = to7Bit(chunk);
     stream.push(0xf0, 0x01, msgNum || 1, xorChecksum(data7), cmd, subCmd, ...data7, 0xf7);
   }
@@ -64,6 +65,8 @@ export function buildMessage(cmd, subCmd, payload = [], msgNum = 1) {
     blocks.push(Uint8Array.from([...header, ...stream.slice(pos, pos + take)]));
     pos += take;
   }
+  // The amp acks one chunk at a time (05 01), so the sender can tell how much arrived.
+  blocks.chunks = parts.length;
   return blocks;
 }
 

@@ -181,3 +181,13 @@ test("garbled payloads are rejected instead of decoded as junk", () => {
   junk[2] = 0xd9; junk[3] = 4; junk[4] = 0x01; // unprintable name characters
   assert.throws(() => decodePreset(junk), /bad/);
 });
+
+test("a tone reports how many chunks the amp must ack", () => {
+  // The amp sends one 05 01 per chunk, then 04 01 for the whole tone. The sender
+  // compares the two, so a tone that arrived in part is resent instead of played.
+  const blocks = encodePreset(TONE, 1);
+  assert.ok(blocks.chunks >= 2, `a full tone spans several chunks, got ${blocks.chunks}`);
+  const starts = blocks.flatMap((b) => Array.from(b).slice(16))
+    .filter((b, i, all) => b === 0xf0 && all[i + 1] === 0x01).length;
+  assert.equal(blocks.chunks, starts, "chunk count must match the F0 01 chunk headers sent");
+});
