@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#111214">
+  <meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
   <title>Spark Switch</title>
   <style>
     :root {
@@ -69,6 +70,14 @@
       color: var(--text); background: rgba(245, 197, 66, .08); user-select: text;
     }
     #version { opacity: .6; }
+    /* The page itself gets cached hard on iOS; this says so instead of leaving an old
+       version running while a fix sits live. */
+    #update {
+      border: 1px solid var(--accent); border-radius: 12px; padding: 10px 14px; font-size: 14px;
+      background: rgba(255, 122, 26, .1); display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    }
+    #update span { flex: 1; min-width: 180px; }
+    #update button { padding: 8px 14px; font-weight: 600; border-color: var(--accent); color: var(--accent); }
     .modes { display: flex; gap: 8px; }
     .modes button { padding: 8px 14px; font-size: 14px; }
     .modes button.selected { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
@@ -110,6 +119,11 @@
     #lib-list li { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
     .lib-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 8px; }
     .lib-actions input[type=file] { font-size: 12px; color: var(--muted); max-width: 100%; }
+    /* An edit the amp never echoed back: shown where it was made. */
+    .slider.unconfirmed span { color: var(--bad); }
+    .slider.unconfirmed span::after { content: " ⚠ not confirmed"; font-size: 11px; }
+    .slider.unconfirmed input { accent-color: var(--bad); }
+    .power.unconfirmed { border-color: var(--bad); color: var(--bad); }
     #test-results { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
     #test-results li {
       display: flex; flex-direction: column; gap: 2px;
@@ -187,6 +201,10 @@
       <div id="status" data-state="disconnected"><span id="status-text">Not connected</span></div>
       <button id="connect-all" class="link" type="button">Show all devices</button>
     </div>
+    <div id="update" hidden>
+      <span>A newer version is available – you are running an old one.</span>
+      <button id="update-now" type="button">Reload now</button>
+    </div>
     <div id="hint" role="alert" hidden></div>
 
     <div id="unsupported" hidden>
@@ -254,6 +272,6 @@
       <pre id="log"></pre>
     </details>
   </main>
-  <script type="module" src="app.js?v=13"></script>
+  <script type="module" src="app.js?v=14"></script>
 </body>
 </html>

@@ -138,4 +138,22 @@ export const changeEffect = (oldName, newName, msgNum) =>
 export const turnEffectOnOff = (effectName, on, msgNum) =>
   buildMessage(0x01, 0x15, [...encPrefixedString(effectName), ...encOnOff(on), 0x00], msgNum);
 
+// ---------- the amp's echo of an edit ----------
+// Same layout as the commands above, with a trailing byte we don't need.
+
+export function decodeEffectParameter(data) {
+  const c = new Cursor(data);
+  return { effect: c.string(), param: c.byte(), value: Math.round(c.float() * 10000) / 10000 };
+}
+
+export function decodeEffectOnOff(data) {
+  const c = new Cursor(data);
+  return { effect: c.string(), isOn: c.onOff() };
+}
+
+export function decodeEffectSwap(data) {
+  const c = new Cursor(data);
+  return { from: c.string(), to: c.string() };
+}
+
 export const internals = { encString, encFloat, encPrefixedString, Cursor };

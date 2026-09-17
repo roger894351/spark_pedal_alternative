@@ -181,6 +181,11 @@ export function describe(msg) {
     const length = (data[1] ?? 0xa0) - 0xa0;
     return { type: "ampName", name: String.fromCharCode(...data.slice(2, 2 + length)) };
   }
+  // The amp echoes every edit back. These are how a change is confirmed: nothing else
+  // acks a knob or an effect switch.
+  if (cmd === 0x03 && subCmd === 0x37) return { type: "paramChanged", data };
+  if (cmd === 0x03 && subCmd === 0x15) return { type: "effectToggled", data };
+  if (cmd === 0x03 && subCmd === 0x06) return { type: "effectSwapped", data };
   if (cmd === 0x04) return { type: "ack", subCmd };
   return null;
 }

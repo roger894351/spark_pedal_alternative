@@ -2,17 +2,18 @@ import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, getAmpName, SparkReader, describe, hex,
   BLE_WRITE_SIZE, DEFAULT_BLE_WRITE_SIZE,
-} from "./spark-protocol.js?v=13";
+} from "./spark-protocol.js?v=14";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
+  decodeEffectParameter, decodeEffectOnOff, decodeEffectSwap,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=13";
-import * as library from "./library.js?v=13";
-import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=13";
-import { randomTone, MIN_MASTER } from "./random-tone.js?v=13";
-import { runSelfTest, verdict } from "./selftest.js?v=13";
+} from "./spark-preset.js?v=14";
+import * as library from "./library.js?v=14";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=14";
+import { randomTone, MIN_MASTER } from "./random-tone.js?v=14";
+import { runSelfTest, verdict } from "./selftest.js?v=14";
 
-const APP_VERSION = "v13";
+const APP_VERSION = "v14";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -59,6 +60,7 @@ const ui = {
   selfTest: $("self-test"), testResults: $("test-results"), importFile: $("import-file"), exportLib: $("export-lib"),
   includePaid: $("include-paid"),
   log: $("log"), copyLog: $("copy-log"), version: $("version"),
+  update: $("update"), updateNow: $("update-now"),
 };
 
 const state = {
@@ -73,6 +75,7 @@ const state = {
   pendingTone: null, activateTimer: null,
   ampName: null, bleWriteSize: DEFAULT_BLE_WRITE_SIZE, toneWaiter: null,
   ackWaiters: [], ampNameWaiter: null, testing: false,
+  pendingEdits: new Map(), echoWaiters: new Map(),
   openSlots: new Set(),
 };
 
@@ -142,6 +145,61 @@ function send(blocks, label, { paced = blocks.length > 1 } = {}) {
     if (blocks.length > 2) log(`→ ${label}: ${blocks.length} blocks, ${blocks.chunks} chunks`);
   }).catch((err) => log(`write failed: ${err.message}`));
   return writeQueue;
+}
+
+// ---------- verify what we send ----------
+//
+// The amp acks a preset change and a whole tone, but never a knob or an effect switch.
+// It does echo them back though — 03 37 for a parameter, 03 15 for on/off, 03 06 for a
+// model swap — and that echo is the only confirmation those commands ever get. Each send
+// records what it expects; the echo clears it. Whatever is left after CONFIRM_MS never
+// landed, and its row says so instead of just sounding wrong.
+
+const CONFIRM_MS = 1500;
+
+const editKey = {
+  param: (effect, param) => `param:${effect}:${param}`,
+  onOff: (effect) => `onoff:${effect}`,
+  model: (effect) => `model:${effect}`,
+};
+
+const rowFor = (key) =>
+  [...document.querySelectorAll("[data-verify]")].find((el) => el.dataset.verify === key) ?? null;
+
+function expectEcho(key, detail) {
+  const open = state.pendingEdits.get(key);
+  if (open) clearTimeout(open.timer);
+  rowFor(key)?.classList.remove("unconfirmed");
+  state.pendingEdits.set(key, {
+    detail,
+    timer: setTimeout(() => {
+      state.pendingEdits.delete(key);
+      log(`⚠ ${detail} — the amp never confirmed this`);
+      rowFor(key)?.classList.add("unconfirmed");
+    }, CONFIRM_MS),
+  });
+}
+
+function echoArrived(key, value) {
+  state.echoWaiters.get(key)?.(value);
+  const open = state.pendingEdits.get(key);
+  if (!open) return false;
+  clearTimeout(open.timer);
+  state.pendingEdits.delete(key);
+  rowFor(key)?.classList.remove("unconfirmed");
+  return true;
+}
+
+// For the self-test: send, then wait for the amp's echo of that exact change.
+function awaitEcho(key, ms = 2500) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { state.echoWaiters.delete(key); resolve(null); }, ms);
+    state.echoWaiters.set(key, (value) => {
+      clearTimeout(timer);
+      state.echoWaiters.delete(key);
+      resolve(value);
+    });
+  });
 }
 
 // ---------- tone selection ----------
@@ -311,11 +369,18 @@ const ampUnderTest = {
     return acked;
   },
   sendTone: sendToneChecked,
-  setParameter: (effect, param, value) =>
+  // Both return what the amp echoed back, or null if it never answered.
+  setParameter: (effect, param, value) => {
+    const echo = awaitEcho(editKey.param(effect, param));
     send(changeEffectParameter(effect, param, value, nextMsgNum()),
-      `${effect} p${param}=${value.toFixed(2)}`),
-  setEffect: (effect, on) =>
-    send(turnEffectOnOff(effect, on, nextMsgNum()), `${effect} ${on ? "on" : "off"}`),
+      `${effect} p${param}=${value.toFixed(2)}`);
+    return echo;
+  },
+  setEffect: (effect, on) => {
+    const echo = awaitEcho(editKey.onOff(effect));
+    send(turnEffectOnOff(effect, on, nextMsgNum()), `${effect} ${on ? "on" : "off"}`);
+    return echo;
+  },
 };
 
 async function selfTest() {
@@ -458,6 +523,7 @@ function swapEffect(slotIndex, newName) {
   const pedal = state.tone?.pedals?.[slotIndex];
   if (!pedal || pedal.name === newName) return;
   send(changeEffect(pedal.name, newName, nextMsgNum()), `${SLOT_LABELS[slotIndex]} → ${newName}`);
+  expectEcho(editKey.model(newName), `${SLOT_LABELS[slotIndex]} → ${newName}`);
 
   // The amp gives the new effect its own settings. Rather than re-reading the tone
   // (the amp would answer with its stored preset and undo the edits), keep the knob
@@ -483,10 +549,30 @@ function sendParameter(slotIndex, param, value) {
   if (!pedal) return;
   pedal.parameters[param] = value;
   clearTimeout(state.sliderTimer);
-  state.sliderTimer = setTimeout(
-    () => send(changeEffectParameter(pedal.name, param, value, nextMsgNum()), `${pedal.name} p${param}=${value.toFixed(2)}`),
-    SLIDER_SEND_MS,
-  );
+  state.sliderTimer = setTimeout(() => {
+    const detail = `${pedal.name} p${param}=${value.toFixed(2)}`;
+    send(changeEffectParameter(pedal.name, param, value, nextMsgNum()), detail);
+    expectEcho(editKey.param(pedal.name, param), detail);
+  }, SLIDER_SEND_MS);
+}
+
+// The echo carries the value the amp actually set, which is the truth. Take it, but don't
+// redraw a knob: the slider may still be under a finger.
+function adoptAmpValue(effect, param, value) {
+  const pedal = state.tone?.pedals?.find((p) => p.name === effect);
+  if (!pedal || pedal.parameters[param] === undefined) return;
+  if (Math.abs(pedal.parameters[param] - value) > 0.02) {
+    log(`⚠ asked for ${pedal.parameters[param].toFixed(2)}, amp set ${value.toFixed(2)}`);
+  }
+  pedal.parameters[param] = value;
+}
+
+// An on/off that differs from ours was made on the amp itself, so show it.
+function adoptAmpOnOff(effect, isOn) {
+  const pedal = state.tone?.pedals?.find((p) => p.name === effect);
+  if (!pedal || pedal.isOn === isOn) return;
+  pedal.isOn = isOn;
+  renderTone();
 }
 
 function nudgeVolume(delta) {
@@ -501,7 +587,9 @@ function toggleEffect(slotIndex) {
   const pedal = state.tone?.pedals?.[slotIndex];
   if (!pedal) return;
   pedal.isOn = !pedal.isOn;
-  send(turnEffectOnOff(pedal.name, pedal.isOn, nextMsgNum()), `${pedal.name} ${pedal.isOn ? "on" : "off"}`);
+  const detail = `${pedal.name} ${pedal.isOn ? "on" : "off"}`;
+  send(turnEffectOnOff(pedal.name, pedal.isOn, nextMsgNum()), detail);
+  expectEcho(editKey.onOff(pedal.name), detail);
   renderTone();
 }
 
@@ -593,6 +681,7 @@ function effectRow(pedal, slotIndex) {
   const power = document.createElement("button");
   power.type = "button";
   power.className = `power${pedal.isOn ? " on" : ""}`;
+  power.dataset.verify = editKey.onOff(pedal.name);
   power.textContent = pedal.isOn ? "ON" : "OFF";
   power.addEventListener("click", (e) => {
     e.preventDefault(); // don't open/close the row
@@ -647,6 +736,7 @@ function markVolume(row, value) {
 function parameterSlider(effectName, slotIndex, param, value) {
   const row = document.createElement("label");
   row.className = "slider";
+  row.dataset.verify = editKey.param(effectName, param);
   row.innerHTML = `<span>${escapeHtml(paramLabel(effectName, param))}</span>
     <input type="range" min="0" max="1" step="0.01" value="${value}">
     <output>${Math.round(value * 100)}</output>`;
@@ -693,6 +783,20 @@ function onNotification(event) {
       settleAck(msg.subCmd);
       if (msg.subCmd === 0x01) activateSentTone();
       if (msg.subCmd === 0x38 || msg.subCmd === 0x01) confirmSlot(state.pendingSlot);
+    } else if (info?.type === "paramChanged") {
+      const { effect, param, value } = decodeEffectParameter(info.data);
+      const asked = echoArrived(editKey.param(effect, param), value);
+      log(`← ${asked ? "confirmed" : "amp changed"} ${effect} p${param}=${value.toFixed(2)}`);
+      adoptAmpValue(effect, param, value);
+    } else if (info?.type === "effectToggled") {
+      const { effect, isOn } = decodeEffectOnOff(info.data);
+      const asked = echoArrived(editKey.onOff(effect), isOn);
+      log(`← ${asked ? "confirmed" : "amp changed"} ${effect} ${isOn ? "on" : "off"}`);
+      adoptAmpOnOff(effect, isOn);
+    } else if (info?.type === "effectSwapped") {
+      const { from, to } = decodeEffectSwap(info.data);
+      const asked = echoArrived(editKey.model(to), to);
+      log(`← ${asked ? "confirmed" : "amp changed"} ${from} → ${to}`);
     } else if (info?.type === "ampName") {
       setAmpModel(info.name);
       state.ampNameWaiter?.(info.name);
@@ -900,6 +1004,29 @@ ui.copyLog.addEventListener("click", async () => {
 });
 
 // ---------- startup ----------
+
+// The page itself gets cached hard on iOS, which has more than once left an old version
+// running while the fix for the very bug being reported sat live. Ask the server what is
+// current and offer a reload that busts the cache with a query string.
+async function checkForUpdate() {
+  try {
+    const res = await fetch(`version.json?t=${Date.now()}`, { cache: "no-store" });
+    const { version } = await res.json();
+    if (!version || version === APP_VERSION) return;
+    log(`running ${APP_VERSION}, but ${version} is live – reload to get it`);
+    ui.update.querySelector("span").textContent =
+      `You are running ${APP_VERSION}. Version ${version} is live.`;
+    ui.update.hidden = false;
+  } catch {
+    // Opened from a file, or offline: nothing to check against.
+  }
+}
+
+ui.updateNow.addEventListener("click", () => {
+  location.replace(`${location.pathname}?r=${Date.now()}`);
+});
+
+checkForUpdate();
 
 ui.version.textContent = APP_VERSION;
 log(`${APP_VERSION} · ${navigator.userAgent}`);

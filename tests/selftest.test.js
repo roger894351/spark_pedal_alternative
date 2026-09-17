@@ -17,9 +17,9 @@ const TONE = {
   ],
 };
 
-// A stand-in amp. `echoesEdits` is the behaviour the real test is there to discover:
-// whether reading the tone back shows live edits or only the stored preset.
-function fakeAmp({ name = "Spark 40", tone = TONE, echoesEdits = true, toneSendOk = true } = {}) {
+// A stand-in amp. `echoes` says whether it answers a knob or effect change with the
+// 03 37 / 03 15 message that is the only confirmation those commands ever get.
+function fakeAmp({ name = "Spark 40", tone = TONE, echoes = true, toneSendOk = true } = {}) {
   const live = tone ? structuredClone(tone) : null;
   const calls = [];
   return {
@@ -27,7 +27,7 @@ function fakeAmp({ name = "Spark 40", tone = TONE, echoesEdits = true, toneSendO
     writeSize: () => 0xad,
     pause: async () => {},
     readAmpName: async () => name,
-    readTone: async () => (tone ? structuredClone(echoesEdits ? live : tone) : null),
+    readTone: async () => (tone ? structuredClone(live) : null),
     changePreset: async (n) => { calls.push(`preset ${n}`); return true; },
     sendTone: async (t, label) => {
       calls.push(`sendTone ${label}`);
@@ -36,11 +36,13 @@ function fakeAmp({ name = "Spark 40", tone = TONE, echoesEdits = true, toneSendO
     setParameter: async (fx, param, value) => {
       calls.push(`param ${fx} ${param}=${value}`);
       live.pedals[AMP_SLOT].parameters[param] = value;
+      return echoes ? value : null;
     },
     setEffect: async (fx, on) => {
       calls.push(`fx ${fx} ${on}`);
       const pedal = live.pedals.find((p) => p.name === fx);
       if (pedal) pedal.isOn = on;
+      return echoes ? on : null;
     },
   };
 }
@@ -62,15 +64,20 @@ test("dropped blocks are reported as the tone-send failure they are", async () =
   assert.match(verdict(steps), /not arriving whole/);
 });
 
-test("an amp that reports only its stored preset is called out, not blamed", async () => {
-  // This is the case the real test exists to settle: the knob command goes out, but
-  // reading back shows the stored value, so nothing can confirm it landed.
-  const steps = await runSelfTest(fakeAmp({ echoesEdits: false }));
-  assert.equal(byName(steps, "Volume change is echoed back").ok, false);
-  assert.match(byName(steps, "Volume change is echoed back").detail, /stored preset/);
-  // The effect check depends on the same read-back, so it is skipped rather than failed.
-  assert.equal(byName(steps, "Reverb on/off").ok, null);
-  assert.match(verdict(steps), /Commands are getting through/);
+test("an amp that never echoes an edit is reported as not taking it", async () => {
+  const steps = await runSelfTest(fakeAmp({ echoes: false }));
+  assert.equal(byName(steps, "Volume reaches the amp").ok, false);
+  assert.match(byName(steps, "Volume reaches the amp").detail, /did not take this change/);
+  assert.equal(byName(steps, "Reverb on/off").ok, false);
+});
+
+test("volume confirmed by the amp points the blame away from the app", async () => {
+  // The amp takes the knob but something else fails: the verdict must not send the user
+  // hunting in the app for a volume problem that is not there.
+  const amp = fakeAmp({ toneSendOk: true });
+  const steps = await runSelfTest(amp);
+  steps.push({ name: "Something else", ok: false, detail: "" });
+  assert.match(verdict(steps), /volume is reaching the amp/);
 });
 
 test("the test stops cleanly when the amp sends no tone", async () => {

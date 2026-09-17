@@ -1,11 +1,10 @@
 // A scripted conversation with the amp: one of every kind of command we send, checking
 // what comes back.
 //
-// Where the amp answers by itself — it names its model, acks a preset change, acks a whole
-// tone — a step can pass or fail outright. Where it stays silent (a knob, an effect switch)
-// the step makes the change and then reads the tone back, which is the only way to find out
-// whether it landed. That read-back also answers a question we have been guessing at: does
-// the amp report what is *playing*, or only what it has *stored*?
+// Some commands the amp acks (a preset change, a whole tone). The rest it never acks — but
+// it echoes them back: 03 37 for a knob, 03 15 for an effect switch. That echo is the only
+// confirmation those commands ever get, and it carries the value the amp actually set, so
+// the test can check not just that the change arrived but that it arrived intact.
 //
 // The test leaves the amp on the tone it started on.
 
@@ -52,40 +51,30 @@ export async function runSelfTest(amp, onStep) {
       ? `${sent.acked}/${sent.chunks} chunks, then the final ack`
       : `only ${sent.acked}/${sent.chunks} chunks confirmed – blocks are being dropped`);
 
-  // 5. A knob. The amp never acks these, so the only check is to read the tone back.
+  // 5. A knob. Never acked, but echoed — and the echo says what the amp actually set.
   const ampPedal = original.pedals[AMP_SLOT];
   const before = ampPedal.parameters[AMP_PARAM.master];
   const probe = before > 0.6 ? 0.35 : 0.85;
-  await amp.setParameter(ampPedal.name, AMP_PARAM.master, probe);
-  await amp.pause(600);
-  const afterKnob = await amp.readTone("read back");
-  const got = afterKnob?.pedals?.[AMP_SLOT]?.parameters?.[AMP_PARAM.master];
-  const knobEchoed = got !== undefined && Math.abs(got - probe) < 0.02;
-  record("Volume change is echoed back", knobEchoed,
-    got === undefined
-      ? "the amp sent no tone to compare against"
-      : knobEchoed
-        ? `set ${pct(probe)} on ${ampPedal.name}, amp reports ${pct(got)}`
-        : `set ${pct(probe)}, amp still reports ${pct(round(got))} — it answers with its `
-          + "stored preset, not what is playing, so a knob cannot be verified this way");
+  const echoed = await amp.setParameter(ampPedal.name, AMP_PARAM.master, probe);
+  record("Volume reaches the amp", echoed !== null && Math.abs(echoed - probe) < 0.02,
+    echoed === null
+      ? `no echo for ${ampPedal.name} — the amp did not take this change`
+      : Math.abs(echoed - probe) < 0.02
+        ? `asked ${ampPedal.name} for ${pct(probe)}, amp confirmed ${pct(echoed)}`
+        : `asked for ${pct(probe)}, amp set ${pct(round(echoed))} instead`);
   await amp.setParameter(ampPedal.name, AMP_PARAM.master, before);
 
-  // 6. An effect switch, same shape. Only meaningful if step 5 showed the amp echoes edits.
+  // 6. An effect switch, same shape, different command (01 15).
   const fx = original.pedals[TEST_SLOT];
   if (!fx?.name) {
     record(`${SLOT_LABELS[TEST_SLOT]} on/off`, false, "the tone has no effect in this slot");
-  } else if (!knobEchoed) {
-    record(`${SLOT_LABELS[TEST_SLOT]} on/off`, null,
-      "skipped – the amp does not report live edits, so there is nothing to compare");
   } else {
-    await amp.setEffect(fx.name, !fx.isOn);
-    await amp.pause(600);
-    const afterFx = await amp.readTone("read back");
-    const isOn = afterFx?.pedals?.[TEST_SLOT]?.isOn;
-    const fxEchoed = isOn === !fx.isOn;
-    record(`${SLOT_LABELS[TEST_SLOT]} on/off`, fxEchoed,
-      fxEchoed ? `${fx.name} switched ${fx.isOn ? "off" : "on"} and reported back`
-               : `${fx.name} did not change`);
+    const wanted = !fx.isOn;
+    const got = await amp.setEffect(fx.name, wanted);
+    record(`${SLOT_LABELS[TEST_SLOT]} on/off`, got === wanted,
+      got === null ? `no echo for ${fx.name} — the amp did not take this change`
+      : got === wanted ? `${fx.name} switched ${wanted ? "on" : "off"} and confirmed`
+      : `${fx.name} answered ${got ? "on" : "off"}, not ${wanted ? "on" : "off"}`);
     await amp.setEffect(fx.name, fx.isOn);
   }
 
@@ -105,11 +94,14 @@ export function verdict(steps) {
     return "Tones are not arriving whole — this is the bug that makes random tones and My "
       + "tones do nothing. Send the log.";
   }
-  const knob = steps.find((s) => s.name === "Volume change is echoed back");
+  const knob = steps.find((s) => s.name === "Volume reaches the amp");
   if (failed.length === 1 && knob && knob.ok === false) {
-    return "Commands are getting through. The amp just doesn't report edits back, so the "
-      + "app can't confirm a knob landed — if volume sounds wrong, check the amp's own "
-      + "Master knob and the Spark app isn't also connected.";
+    return "Presets and tones are fine, but the amp is not taking volume changes. Check "
+      + "the Spark app isn't connected at the same time, then run this again.";
+  }
+  if (knob && knob.ok === true) {
+    return `${failed.length} check(s) failed, but volume is reaching the amp — if it still `
+      + "sounds wrong, that is the amp's own Master knob, not the app.";
   }
   return `${failed.length} check(s) failed — send the log.`;
 }
