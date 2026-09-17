@@ -2,18 +2,18 @@ import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, getAmpName, SparkReader, describe, hex,
   BLE_WRITE_SIZE, DEFAULT_BLE_WRITE_SIZE,
-} from "./spark-protocol.js?v=14";
+} from "./spark-protocol.js?v=15";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   decodeEffectParameter, decodeEffectOnOff, decodeEffectSwap,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=14";
-import * as library from "./library.js?v=14";
-import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=14";
-import { randomTone, MIN_MASTER } from "./random-tone.js?v=14";
-import { runSelfTest, verdict } from "./selftest.js?v=14";
+} from "./spark-preset.js?v=15";
+import * as library from "./library.js?v=15";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=15";
+import { randomTone, MIN_MASTER } from "./random-tone.js?v=15";
+import { runSelfTest, verdict } from "./selftest.js?v=15";
 
-const APP_VERSION = "v14";
+const APP_VERSION = "v15";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -75,7 +75,8 @@ const state = {
   pendingTone: null, activateTimer: null,
   ampName: null, bleWriteSize: DEFAULT_BLE_WRITE_SIZE, toneWaiter: null,
   ackWaiters: [], ampNameWaiter: null, testing: false,
-  pendingEdits: new Map(), echoWaiters: new Map(),
+  pendingEdits: new Map(), echoWaiters: new Map(), adoptTimer: null, decodeRetries: 0,
+  inspecting: false,
   openSlots: new Set(),
 };
 
@@ -174,7 +175,9 @@ function expectEcho(key, detail) {
     detail,
     timer: setTimeout(() => {
       state.pendingEdits.delete(key);
-      log(`⚠ ${detail} — the amp never confirmed this`);
+      const effect = key.split(":")[1];
+      log(`⚠ ${detail} — the amp never confirmed this.`
+        + ` Does this amp have "${effect}"? A Spark 40 and a MINI don't ship the same models.`);
       rowFor(key)?.classList.add("unconfirmed");
     }, CONFIRM_MS),
   });
@@ -256,15 +259,51 @@ function activateSentTone() {
   if (!state.pendingTone) return;
   state.pendingTone = null;
   clearTimeout(state.activateTimer);
-  send(changeHardwarePreset(TEMP_PRESET, nextMsgNum()), "play sent tone");
+  activateTemp();
 }
 
-// No final ack means blocks went missing. Resend once rather than switching to a
-// half-written tone — that silent failure is what made sent tones look like no-ops.
+function activateTemp() {
+  send(changeHardwarePreset(TEMP_PRESET, nextMsgNum()), "play sent tone");
+  checkWhatLoaded();
+}
+
+// Ask the amp what it is on after loading a tone — a read that must not change anything.
+//
+// The open question behind "volume did nothing": a knob command names the effect it applies
+// to, so if the amp is not on the gear we think it is, it ignores us. We do not yet know
+// what a Spark answers here while it sits on the temporary slot, so this only reports what
+// came back. `inspecting` keeps that answer out of the tone panel: if the amp replies with
+// its stored preset instead of what we sent, adopting it would throw away the tone the
+// user is listening to.
+function checkWhatLoaded() {
+  clearTimeout(state.adoptTimer);
+  state.adoptTimer = setTimeout(async () => {
+    if (state.testing) return; // the self-test does its own reading
+    const expected = state.tone?.pedals?.[AMP_SLOT]?.name;
+    state.inspecting = true;
+    const loaded = await readTone("what is the amp on?");
+    state.inspecting = false;
+    if (!loaded) return;
+    const actual = loaded.pedals?.[AMP_SLOT]?.name;
+    log(actual === expected
+      ? `amp confirms it is on ${actual}`
+      : `⚠ we are editing ${expected}, but the amp reports "${loaded.name}" (${actual})`);
+  }, 700);
+}
+
+// No final ack. If chunks went missing the tone is half-written and must be sent again —
+// that silent failure is what made sent tones look like no-ops. But if every chunk was
+// acked the tone *is* on the amp and only the ack is late (a MINI is slower, since its
+// blocks go out in 100-byte writes), so play it rather than sending the whole thing twice.
 function toneTimedOut() {
   const pending = state.pendingTone;
   if (!pending) return;
   state.pendingTone = null;
+  if (pending.acked >= pending.chunks) {
+    log(`${pending.label}: all ${pending.chunks} chunks arrived, final ack was late – playing it`);
+    activateTemp();
+    return;
+  }
   log(`${pending.label}: only ${pending.acked}/${pending.chunks} chunks confirmed`);
   if (pending.tries < 1) {
     sendTone(pending.tone, `${pending.label} (resend)`, pending.tries + 1);
@@ -762,12 +801,16 @@ function onNotification(event) {
     if (info?.type === "tone") {
       try {
         const tone = decodePreset(info.data);
+        state.decodeRetries = 0;
         log(`← tone "${tone.name}"`);
-        setTone(tone);
+        if (!state.inspecting) setTone(tone);
         state.toneWaiter?.(tone);
       } catch (err) {
-        log(`tone decode failed (${err.message}) – asking again`);
-        setTimeout(() => requestTone("get tone (retry)"), 600);
+        // Without the bytes there is nothing to go on, and this has now cost two sessions.
+        log(`tone decode failed (${err.message}): ${hex(info.data.slice(0, 48))}`);
+        state.toneWaiter?.(null);
+        if (state.decodeRetries++ < 2) setTimeout(() => requestTone("get tone (retry)"), 600);
+        else log("giving up on this tone – press a preset button to reload");
       }
     } else if (info?.type === "preset") {
       log(`← amp preset: ${info.preset ?? "custom"}`);
