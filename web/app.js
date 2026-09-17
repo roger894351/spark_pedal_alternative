@@ -2,18 +2,18 @@ import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, getAmpName, SparkReader, describe, hex,
   BLE_WRITE_SIZE, DEFAULT_BLE_WRITE_SIZE,
-} from "./spark-protocol.js?v=15";
+} from "./spark-protocol.js?v=16";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   decodeEffectParameter, decodeEffectOnOff, decodeEffectSwap,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=15";
-import * as library from "./library.js?v=15";
-import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=15";
-import { randomTone, MIN_MASTER } from "./random-tone.js?v=15";
-import { runSelfTest, verdict } from "./selftest.js?v=15";
+} from "./spark-preset.js?v=16";
+import * as library from "./library.js?v=16";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=16";
+import { randomTone, MIN_MASTER } from "./random-tone.js?v=16";
+import { runSelfTest, verdict } from "./selftest.js?v=16";
 
-const APP_VERSION = "v15";
+const APP_VERSION = "v16";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -167,12 +167,12 @@ const editKey = {
 const rowFor = (key) =>
   [...document.querySelectorAll("[data-verify]")].find((el) => el.dataset.verify === key) ?? null;
 
-function expectEcho(key, detail) {
+function expectEcho(key, detail, sent) {
   const open = state.pendingEdits.get(key);
   if (open) clearTimeout(open.timer);
   rowFor(key)?.classList.remove("unconfirmed");
   state.pendingEdits.set(key, {
-    detail,
+    detail, sent,
     timer: setTimeout(() => {
       state.pendingEdits.delete(key);
       const effect = key.split(":")[1];
@@ -183,14 +183,16 @@ function expectEcho(key, detail) {
   });
 }
 
+// Returns the expectation this echo answers, or null when nobody asked for it — which
+// means the change was made on the amp itself, not by us.
 function echoArrived(key, value) {
   state.echoWaiters.get(key)?.(value);
   const open = state.pendingEdits.get(key);
-  if (!open) return false;
+  if (!open) return null;
   clearTimeout(open.timer);
   state.pendingEdits.delete(key);
   rowFor(key)?.classList.remove("unconfirmed");
-  return true;
+  return open;
 }
 
 // For the self-test: send, then wait for the amp's echo of that exact change.
@@ -267,27 +269,39 @@ function activateTemp() {
   checkWhatLoaded();
 }
 
-// Ask the amp what it is on after loading a tone — a read that must not change anything.
+// After loading a tone, ask the amp what it actually ended up with.
 //
-// The open question behind "volume did nothing": a knob command names the effect it applies
-// to, so if the amp is not on the gear we think it is, it ignores us. We do not yet know
-// what a Spark answers here while it sits on the temporary slot, so this only reports what
-// came back. `inspecting` keeps that answer out of the tone panel: if the amp replies with
-// its stored preset instead of what we sent, adopting it would throw away the tone the
-// user is listening to.
+// A knob command names the effect it applies to, so being wrong about the amp's gear means
+// every later edit is silently ignored — which is exactly what happened sending a Spark 40
+// tone using "Plexi" to a Spark MINI, which has no such model. The amp accepted the tone,
+// loaded something else, and then ignored every volume change addressed to Plexi.
+//
+// The read is only trusted when the amp comes back with the tone we sent, by name. If it
+// answers with something else it is telling us about its stored preset, and adopting that
+// would throw away the tone being listened to.
 function checkWhatLoaded() {
   clearTimeout(state.adoptTimer);
   state.adoptTimer = setTimeout(async () => {
     if (state.testing) return; // the self-test does its own reading
-    const expected = state.tone?.pedals?.[AMP_SLOT]?.name;
+    const sent = state.tone;
+    if (!sent) return;
     state.inspecting = true;
     const loaded = await readTone("what is the amp on?");
     state.inspecting = false;
     if (!loaded) return;
-    const actual = loaded.pedals?.[AMP_SLOT]?.name;
-    log(actual === expected
-      ? `amp confirms it is on ${actual}`
-      : `⚠ we are editing ${expected}, but the amp reports "${loaded.name}" (${actual})`);
+    if (loaded.name !== sent.name) {
+      log(`⚠ editing "${sent.name}" but the amp reports "${loaded.name}" – not adopting`);
+      return;
+    }
+    const missing = loaded.pedals
+      .map((p, i) => (sent.pedals[i] && p.name !== sent.pedals[i].name ? sent.pedals[i].name : null))
+      .filter(Boolean);
+    if (missing.length) {
+      log(`⚠ this amp has no ${missing.join(", ")} – editing what it loaded instead`);
+      showHint(`${state.ampName ?? "This amp"} doesn't have ${missing.join(", ")}.`
+        + " It substituted its own gear, and the sliders now follow that.");
+    }
+    setTone(loaded); // what the amp has is what we edit
   }, 700);
 }
 
@@ -410,14 +424,19 @@ const ampUnderTest = {
   sendTone: sendToneChecked,
   // Both return what the amp echoed back, or null if it never answered.
   setParameter: (effect, param, value) => {
-    const echo = awaitEcho(editKey.param(effect, param));
-    send(changeEffectParameter(effect, param, value, nextMsgNum()),
-      `${effect} p${param}=${value.toFixed(2)}`);
+    const key = editKey.param(effect, param);
+    const echo = awaitEcho(key);
+    const detail = `${effect} p${param}=${value.toFixed(2)}`;
+    send(changeEffectParameter(effect, param, value, nextMsgNum()), detail);
+    expectEcho(key, detail, value);
     return echo;
   },
   setEffect: (effect, on) => {
-    const echo = awaitEcho(editKey.onOff(effect));
-    send(turnEffectOnOff(effect, on, nextMsgNum()), `${effect} ${on ? "on" : "off"}`);
+    const key = editKey.onOff(effect);
+    const echo = awaitEcho(key);
+    const detail = `${effect} ${on ? "on" : "off"}`;
+    send(turnEffectOnOff(effect, on, nextMsgNum()), detail);
+    expectEcho(key, detail, on);
     return echo;
   },
 };
@@ -562,7 +581,7 @@ function swapEffect(slotIndex, newName) {
   const pedal = state.tone?.pedals?.[slotIndex];
   if (!pedal || pedal.name === newName) return;
   send(changeEffect(pedal.name, newName, nextMsgNum()), `${SLOT_LABELS[slotIndex]} → ${newName}`);
-  expectEcho(editKey.model(newName), `${SLOT_LABELS[slotIndex]} → ${newName}`);
+  expectEcho(editKey.model(newName), `${SLOT_LABELS[slotIndex]} → ${newName}`, newName);
 
   // The amp gives the new effect its own settings. Rather than re-reading the tone
   // (the amp would answer with its stored preset and undo the edits), keep the knob
@@ -591,7 +610,7 @@ function sendParameter(slotIndex, param, value) {
   state.sliderTimer = setTimeout(() => {
     const detail = `${pedal.name} p${param}=${value.toFixed(2)}`;
     send(changeEffectParameter(pedal.name, param, value, nextMsgNum()), detail);
-    expectEcho(editKey.param(pedal.name, param), detail);
+    expectEcho(editKey.param(pedal.name, param), detail, value);
   }, SLIDER_SEND_MS);
 }
 
@@ -600,9 +619,6 @@ function sendParameter(slotIndex, param, value) {
 function adoptAmpValue(effect, param, value) {
   const pedal = state.tone?.pedals?.find((p) => p.name === effect);
   if (!pedal || pedal.parameters[param] === undefined) return;
-  if (Math.abs(pedal.parameters[param] - value) > 0.02) {
-    log(`⚠ asked for ${pedal.parameters[param].toFixed(2)}, amp set ${value.toFixed(2)}`);
-  }
   pedal.parameters[param] = value;
 }
 
@@ -628,7 +644,7 @@ function toggleEffect(slotIndex) {
   pedal.isOn = !pedal.isOn;
   const detail = `${pedal.name} ${pedal.isOn ? "on" : "off"}`;
   send(turnEffectOnOff(pedal.name, pedal.isOn, nextMsgNum()), detail);
-  expectEcho(editKey.onOff(pedal.name), detail);
+  expectEcho(editKey.onOff(pedal.name), detail, pedal.isOn);
   renderTone();
 }
 
@@ -829,7 +845,11 @@ function onNotification(event) {
     } else if (info?.type === "paramChanged") {
       const { effect, param, value } = decodeEffectParameter(info.data);
       const asked = echoArrived(editKey.param(effect, param), value);
-      log(`← ${asked ? "confirmed" : "amp changed"} ${effect} p${param}=${value.toFixed(2)}`);
+      const shown = `${effect} p${param}=${value.toFixed(2)}`;
+      if (!asked) log(`← amp changed ${shown}`);
+      else if (Math.abs(asked.sent - value) > 0.02) {
+        log(`⚠ asked ${effect} p${param} for ${asked.sent.toFixed(2)}, amp set ${value.toFixed(2)}`);
+      } else log(`← confirmed ${shown}`);
       adoptAmpValue(effect, param, value);
     } else if (info?.type === "effectToggled") {
       const { effect, isOn } = decodeEffectOnOff(info.data);
@@ -843,6 +863,8 @@ function onNotification(event) {
     } else if (info?.type === "ampName") {
       setAmpModel(info.name);
       state.ampNameWaiter?.(info.name);
+    } else if (msg.cmd === 0x03 && msg.subCmd === 0x27) {
+      log("← amp stored the tone");
     } else if (msg.cmd === 0x05 && msg.subCmd === 0x01) {
       noteChunkAck(); // one chunk of a tone accepted
       log(`← chunk ok${state.pendingTone ? ` (${state.pendingTone.acked}/${state.pendingTone.chunks})` : ""}`);
