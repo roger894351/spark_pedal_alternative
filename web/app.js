@@ -2,16 +2,17 @@ import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, getAmpName, SparkReader, describe, hex,
   BLE_WRITE_SIZE, DEFAULT_BLE_WRITE_SIZE,
-} from "./spark-protocol.js?v=12";
+} from "./spark-protocol.js?v=13";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=12";
-import * as library from "./library.js?v=12";
-import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=12";
-import { randomTone, MIN_MASTER } from "./random-tone.js?v=12";
+} from "./spark-preset.js?v=13";
+import * as library from "./library.js?v=13";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=13";
+import { randomTone, MIN_MASTER } from "./random-tone.js?v=13";
+import { runSelfTest, verdict } from "./selftest.js?v=13";
 
-const APP_VERSION = "v12";
+const APP_VERSION = "v13";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -54,7 +55,8 @@ const ui = {
   tonePanel: $("tone-panel"), toneName: $("tone-name"), revert: $("revert"),
   sliders: $("sliders"), effects: $("effects"),
   libCount: $("lib-count"), libList: $("lib-list"),
-  saveTone: $("save-tone"), copyPresets: $("copy-presets"), importFile: $("import-file"), exportLib: $("export-lib"),
+  saveTone: $("save-tone"), copyPresets: $("copy-presets"),
+  selfTest: $("self-test"), testResults: $("test-results"), importFile: $("import-file"), exportLib: $("export-lib"),
   includePaid: $("include-paid"),
   log: $("log"), copyLog: $("copy-log"), version: $("version"),
 };
@@ -70,6 +72,7 @@ const state = {
   msgNum: 0, ackTimer: null, wakeLock: null, sliderTimer: null, lastToneRequest: 0,
   pendingTone: null, activateTimer: null,
   ampName: null, bleWriteSize: DEFAULT_BLE_WRITE_SIZE, toneWaiter: null,
+  ackWaiters: [], ampNameWaiter: null, testing: false,
   openSlots: new Set(),
 };
 
@@ -241,6 +244,109 @@ function awaitTone(ms = 2500) {
     const timer = setTimeout(() => { state.toneWaiter = null; resolve(null); }, ms);
     state.toneWaiter = (tone) => { clearTimeout(timer); state.toneWaiter = null; resolve(tone); };
   });
+}
+
+// The amp acks some commands and ignores others; these let a caller wait for the ones it does.
+function awaitAck(subCmd, ms = 3000) {
+  return new Promise((resolve) => {
+    const waiter = { subCmd, resolve };
+    waiter.timer = setTimeout(() => {
+      state.ackWaiters = state.ackWaiters.filter((w) => w !== waiter);
+      resolve(false);
+    }, ms);
+    state.ackWaiters.push(waiter);
+  });
+}
+
+function settleAck(subCmd) {
+  state.ackWaiters = state.ackWaiters.filter((waiter) => {
+    if (waiter.subCmd !== subCmd) return true;
+    clearTimeout(waiter.timer);
+    waiter.resolve(true);
+    return false;
+  });
+}
+
+function awaitAmpName(ms = 2500) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { state.ampNameWaiter = null; resolve(null); }, ms);
+    state.ampNameWaiter = (name) => { clearTimeout(timer); state.ampNameWaiter = null; resolve(name); };
+  });
+}
+
+// Ask for the tone and wait for it, ignoring the throttle that stops ordinary edits
+// from bouncing back to the amp's stored preset.
+function readTone(label) {
+  state.lastToneRequest = 0;
+  const arriving = awaitTone();
+  requestTone(label);
+  return arriving;
+}
+
+// Like sendTone, but reports what the amp confirmed instead of quietly resending.
+async function sendToneChecked(tone, label) {
+  const blocks = encodePreset(tone, nextMsgNum());
+  const pending = { tone, label, tries: 1, chunks: blocks.chunks, acked: 0 };
+  state.pendingTone = pending;
+  clearTimeout(state.activateTimer);
+  state.activateTimer = setTimeout(toneTimedOut, TONE_ACK_TIMEOUT_MS);
+  const acked = awaitAck(0x01);
+  send(blocks, label);
+  return { ok: await acked, acked: pending.acked, chunks: pending.chunks };
+}
+
+// What runSelfTest drives. Everything it needs, nothing about the page.
+const ampUnderTest = {
+  writeSize: () => state.bleWriteSize,
+  pause: sleep,
+  readAmpName: () => {
+    const arriving = awaitAmpName();
+    send(getAmpName(nextMsgNum()), "get amp name");
+    return arriving;
+  },
+  readTone,
+  changePreset: (n) => {
+    const acked = awaitAck(0x38);
+    send(changeHardwarePreset(n, nextMsgNum()), `preset ${n}`);
+    return acked;
+  },
+  sendTone: sendToneChecked,
+  setParameter: (effect, param, value) =>
+    send(changeEffectParameter(effect, param, value, nextMsgNum()),
+      `${effect} p${param}=${value.toFixed(2)}`),
+  setEffect: (effect, on) =>
+    send(turnEffectOnOff(effect, on, nextMsgNum()), `${effect} ${on ? "on" : "off"}`),
+};
+
+async function selfTest() {
+  if (!state.connected || state.testing) return;
+  state.testing = true;
+  ui.selfTest.disabled = true;
+  ui.testResults.hidden = false;
+  ui.testResults.innerHTML = "<li>Testing…</li>";
+  const rows = [];
+  const draw = () => { ui.testResults.innerHTML = rows.join(""); };
+
+  try {
+    const steps = await runSelfTest(ampUnderTest, (step) => {
+      const mark = step.ok === null ? "–" : step.ok ? "✓" : "✗";
+      const kind = step.ok === null ? "skip" : step.ok ? "pass" : "fail";
+      rows.push(`<li class="${kind}"><b>${mark} ${escapeHtml(step.name)}</b>`
+        + `<span>${escapeHtml(step.detail)}</span></li>`);
+      draw();
+    });
+    rows.push(`<li class="verdict">${escapeHtml(verdict(steps))}</li>`);
+    draw();
+    // The test moved the amp around; show whatever it ended on.
+    setTone(await readTone("read tone") ?? state.tone);
+  } catch (err) {
+    rows.push(`<li class="fail"><b>✗ Test stopped</b><span>${escapeHtml(err.message)}</span></li>`);
+    draw();
+  } finally {
+    state.testing = false;
+    ui.selfTest.disabled = false;
+    render();
+  }
 }
 
 async function copyAmpPresets() {
@@ -584,10 +690,12 @@ function onNotification(event) {
       }
     } else if (info?.type === "ack") {
       log(`← ack ${msg.subCmd.toString(16)}`);
+      settleAck(msg.subCmd);
       if (msg.subCmd === 0x01) activateSentTone();
       if (msg.subCmd === 0x38 || msg.subCmd === 0x01) confirmSlot(state.pendingSlot);
     } else if (info?.type === "ampName") {
       setAmpModel(info.name);
+      state.ampNameWaiter?.(info.name);
     } else if (msg.cmd === 0x05 && msg.subCmd === 0x01) {
       noteChunkAck(); // one chunk of a tone accepted
       log(`← chunk ok${state.pendingTone ? ` (${state.pendingTone.acked}/${state.pendingTone.chunks})` : ""}`);
@@ -746,6 +854,7 @@ ui.saveTone.addEventListener("click", () => {
 });
 
 ui.copyPresets.addEventListener("click", copyAmpPresets);
+ui.selfTest.addEventListener("click", selfTest);
 
 ui.importFile.addEventListener("change", async () => {
   const files = [...ui.importFile.files];

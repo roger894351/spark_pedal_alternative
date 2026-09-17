@@ -167,6 +167,7 @@ Two ways to do it:
 - [x] Phase 2f (v9/v10): random tones never inherit a near-silent volume (floor 25%) and the volume row warns below 15%; **v10 fixes the real bug** – a tone sent with command `01 01` lands in the amp's temporary slot `0x7F` and is only heard after `01 38 00 7F` (select preset 128). Ignitron does this on the final `04 01` ack (`SparkDataControl::handleIncomingAck`, `customPresetNumberChangePending`). Without it the amp acks the tone and keeps playing the old preset.
 - [x] Phase 2g (v11): **the real fix for sent tones.** A tone is 3–4 BLE blocks and they were written with `writeValueWithoutResponse`, which has no flow control – the amp dropped the tail of the burst, acked only the chunks it got (`05 01`) and never sent the final `04 01`. Multi-block messages now go out with response and a 30 ms gap (Ignitron's `SparkBTControl::writeBLE` comments the same: "Delay seems to be required in order to not lose any packages"), chunk acks are counted against chunks sent, and an unconfirmed tone is resent once instead of being played half-written. Single-block commands keep the fast path.
 - [x] Phase 2h (v12): **works with more than one Spark.** The app asks the amp its model (`02 11` → `03 11`) and sizes BLE writes accordingly – a **Spark MINI or Spark 2 accepts only 0x64 bytes per write**, so a 0xAD block sent whole loses its tail and the tone never completes (Ignitron's `SparkDataControl::setAmpParameters`). Adds **"Copy amp's 4 presets"**, which reads hardware presets 1–4 into My tones so a Spark 40's presets can be played on a MINI and exported to a file.
+- [x] Phase 2i (v13): **"Test amp"** self-check (`web/selftest.js`) – one button walks every kind of command (amp identity, read tone, preset change, full tone, knob, effect on/off) and reports pass/fail per row with a plain-language verdict, then puts the amp back on the tone it started on. Where the amp acks (`01 38`, `04 01`) a step passes outright; where it stays silent (`01 04`, `01 15`) the step reads the tone back, which also settles whether the amp reports **live edits or only its stored preset** – the question behind "volume is not working" and behind whether §8.1 verify-after-write is possible at all.
 - [ ] Phase 3 ESP32 pedal – build spec v2 in ESP32_CONTROLLER.md (Ignitron + 3D-printed case, no drilling, USB power bank, keyboard mode for Anki); next: order parts
 
 ## 7. References
@@ -193,7 +194,7 @@ So the fix is structural, not another patch:
       the last change settles, ask the amp (`02 01`) and diff. Mismatch ⇒ a visible ⚠ on the
       row that differs, not a silent wrong sound. This converts *every* future protocol bug
       into something you can see in one glance.
-- [ ] **"Test amp" self-check.** One button that exercises each command type once — preset
+- [x] **"Test amp" self-check.** *(v13)* One button that exercises each command type once — preset
       change, one knob, effect on/off, model swap, full tone — and prints ✓/✗ per row. A bug
       report becomes one screenshot instead of a 60-line hex log.
 - [ ] **Log in two layers.** One line per *intent* with a state marker (`… sent / ✓ confirmed /

@@ -110,6 +110,21 @@
     #lib-list li { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
     .lib-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 8px; }
     .lib-actions input[type=file] { font-size: 12px; color: var(--muted); max-width: 100%; }
+    #test-results { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+    #test-results li {
+      display: flex; flex-direction: column; gap: 2px;
+      border-left: 3px solid var(--line); padding: 6px 0 6px 10px; font-size: 13px;
+    }
+    #test-results li.pass { border-left-color: var(--ok); }
+    #test-results li.fail { border-left-color: var(--bad); }
+    #test-results li.skip { border-left-color: var(--muted); opacity: .7; }
+    #test-results li b { font-weight: 600; }
+    #test-results li.pass b { color: var(--ok); }
+    #test-results li.fail b { color: var(--bad); }
+    #test-results li span { color: var(--muted); }
+    #test-results li.verdict {
+      border-left-color: var(--accent); color: var(--text); font-weight: 600; margin-top: 4px;
+    }
     .setting { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--muted); }
     .setting input { accent-color: var(--accent); }
 
@@ -231,10 +246,14 @@
 
     <details>
       <summary>Bluetooth log <span id="version"></span></summary>
-      <button id="copy-log" class="link" type="button">Copy log</button>
+      <div class="lib-actions">
+        <button id="self-test" class="link" type="button">Test amp</button>
+        <button id="copy-log" class="link" type="button">Copy log</button>
+      </div>
+      <ul id="test-results" hidden></ul>
       <pre id="log"></pre>
     </details>
   </main>
-  <script type="module" src="app.js?v=12"></script>
+  <script type="module" src="app.js?v=13"></script>
 </body>
 </html>
