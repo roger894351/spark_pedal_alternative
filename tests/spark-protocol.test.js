@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildMessage, changeHardwarePreset, getCurrentPresetNumber,
   to7Bit, from7Bit, SparkReader, describe, hex,
+  getAmpName, BLE_WRITE_SIZE, DEFAULT_BLE_WRITE_SIZE,
 } from "../web/spark-protocol.js";
 
 const HEADER = "01 FE 00 00 53 FE 1A 00 00 00 00 00 00 00 00 00";
@@ -65,4 +66,29 @@ test("preset 128 selects the amp's temporary slot 0x7F", () => {
   // Ignitron sends this after a full tone so the amp actually plays what it received.
   const [block] = changeHardwarePreset(128, 1);
   assert.ok(hex(block).endsWith("01 38 00 00 7F F7"), hex(block)); // 7-bit high byte, then 00 7F
+});
+
+test("the amp is asked which model it is, and answers with its name", () => {
+  const [block] = getAmpName(1);
+  assert.ok(hex(block).endsWith("02 11 F7"), hex(block));
+  // 03 11 comes back as: one byte, then 0xa0 + length, then the name.
+  const name = "Spark MINI";
+  const data = [0x00, 0xa0 + name.length, ...Array.from(name, (c) => c.charCodeAt(0))];
+  assert.deepEqual(describe({ cmd: 0x03, subCmd: 0x11, data }), { type: "ampName", name });
+});
+
+test("a Spark MINI takes smaller BLE writes than a Spark 40", () => {
+  // Ignitron's SparkDataControl::setAmpParameters: MINI and Spark 2 cap writes at 0x64.
+  // A 0xAD block written whole to a MINI loses its tail and the tone never completes.
+  assert.equal(BLE_WRITE_SIZE["Spark MINI"], 0x64);
+  assert.equal(BLE_WRITE_SIZE["Spark 2"], 0x64);
+  assert.equal(BLE_WRITE_SIZE["Spark 40"] ?? DEFAULT_BLE_WRITE_SIZE, 0xad);
+
+  // Every block still splits into whole writes with nothing left over.
+  const blocks = buildMessage(0x01, 0x01, new Array(400).fill(0x42), 1);
+  for (const block of blocks) {
+    let sent = 0;
+    for (let pos = 0; pos < block.length; pos += 0x64) sent += block.subarray(pos, pos + 0x64).length;
+    assert.equal(sent, block.length);
+  }
 });

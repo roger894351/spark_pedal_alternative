@@ -55,7 +55,7 @@ Open **https://roger894351.github.io/spark_pedal_alternative/** in Bluefy. It's 
 | Problem                                  | Fix                                                                 |
 |------------------------------------------|---------------------------------------------------------------------|
 | Amp not listed when connecting           | Close the page on other devices (Mac Chrome) and the Spark app; forget "Spark 40 BLE" in iPhone Settings → Bluetooth; power-cycle the amp; try **Show all devices** |
-| Old version still showing                | The log header should say `v11`; pull down to reload in Bluefy          |
+| Old version still showing                | The log header should say `v12`; pull down to reload in Bluefy          |
 | "Bluetooth not available in this browser" | Use Bluefy (iPhone) or Chrome (Mac/Android); page must be HTTPS or localhost |
 | Connected, but keys do nothing           | Tap an empty area of the page once so it has focus; check the keyboard is in BT mode |
 | Preset button stays yellow / other errors | Open **Bluetooth log** at the bottom, tap **Copy log**, and share it   |

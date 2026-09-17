@@ -1,16 +1,17 @@
 import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
-  changeHardwarePreset, getCurrentPresetNumber, SparkReader, describe, hex,
-} from "./spark-protocol.js?v=11";
+  changeHardwarePreset, getCurrentPresetNumber, getAmpName, SparkReader, describe, hex,
+  BLE_WRITE_SIZE, DEFAULT_BLE_WRITE_SIZE,
+} from "./spark-protocol.js?v=12";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=11";
-import * as library from "./library.js?v=11";
-import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=11";
-import { randomTone, MIN_MASTER } from "./random-tone.js?v=11";
+} from "./spark-preset.js?v=12";
+import * as library from "./library.js?v=12";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=12";
+import { randomTone, MIN_MASTER } from "./random-tone.js?v=12";
 
-const APP_VERSION = "v11";
+const APP_VERSION = "v12";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -53,7 +54,7 @@ const ui = {
   tonePanel: $("tone-panel"), toneName: $("tone-name"), revert: $("revert"),
   sliders: $("sliders"), effects: $("effects"),
   libCount: $("lib-count"), libList: $("lib-list"),
-  saveTone: $("save-tone"), importFile: $("import-file"), exportLib: $("export-lib"),
+  saveTone: $("save-tone"), copyPresets: $("copy-presets"), importFile: $("import-file"), exportLib: $("export-lib"),
   includePaid: $("include-paid"),
   log: $("log"), copyLog: $("copy-log"), version: $("version"),
 };
@@ -68,6 +69,7 @@ const state = {
   baseline: null, // that tone as first loaded, for "undo my changes"
   msgNum: 0, ackTimer: null, wakeLock: null, sliderTimer: null, lastToneRequest: 0,
   pendingTone: null, activateTimer: null,
+  ampName: null, bleWriteSize: DEFAULT_BLE_WRITE_SIZE, toneWaiter: null,
   openSlots: new Set(),
 };
 
@@ -89,6 +91,17 @@ function setStatus(kind, text) {
 
 const showHint = (text) => { ui.hint.textContent = text ?? ""; ui.hint.hidden = !text; };
 
+// Which Spark we're talking to. Only the BLE write size differs — a Spark MINI or
+// Spark 2 accepts 0x64 bytes per write, so a 0xAD block sent whole loses its tail and
+// the tone never completes. Everything else (tone format, commands) is the same.
+function setAmpModel(name) {
+  if (!name) return;
+  state.ampName = name;
+  state.bleWriteSize = BLE_WRITE_SIZE[name] ?? DEFAULT_BLE_WRITE_SIZE;
+  log(`← amp: ${name} (${state.bleWriteSize} bytes per write)`);
+  if (state.connected) setStatus("connected", `Connected: ${name}`);
+}
+
 const nextMsgNum = () => (state.msgNum = (state.msgNum % 0x7f) + 1);
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -109,11 +122,18 @@ function send(blocks, label, { paced = blocks.length > 1 } = {}) {
   writeQueue = writeQueue.then(async () => {
     const props = state.writeChar.properties ?? {};
     const fast = !paced && props.writeWithoutResponse && state.writeChar.writeValueWithoutResponse;
+    const write = async (part) => {
+      if (fast) await state.writeChar.writeValueWithoutResponse(part);
+      else if (props.write) await state.writeChar.writeValue(part);
+      else await state.writeChar.writeValueWithoutResponse(part);
+    };
     for (const [i, block] of blocks.entries()) {
       if (blocks.length <= 2) log(`→ ${label}: ${hex(block)}`);
-      if (fast) await state.writeChar.writeValueWithoutResponse(block);
-      else if (props.write) await state.writeChar.writeValue(block);
-      else await state.writeChar.writeValueWithoutResponse(block);
+      // A Spark MINI or Spark 2 only accepts 0x64 bytes per write, a Spark 40 the whole
+      // 0xAD block. Splitting further is transport-level: the block itself is unchanged.
+      for (let pos = 0; pos < block.length; pos += state.bleWriteSize) {
+        await write(block.subarray(pos, pos + state.bleWriteSize));
+      }
       if (paced && i < blocks.length - 1) await sleep(BLOCK_GAP_MS);
     }
     if (blocks.length > 2) log(`→ ${label}: ${blocks.length} blocks, ${blocks.chunks} chunks`);
@@ -211,6 +231,46 @@ function sendRandomTone() {
   setTone(tone);
   render();
   log(`random tone: ${tone.pedals.filter((p) => p.isOn).map((p) => displayName(p.name, p.parameters)).join(" + ")}`);
+}
+
+// Hardware presets live in the amp, so a Spark 40's four presets are not on a Spark MINI.
+// Reading them into My tones makes them portable: from there they are sent over BLE and
+// play on any Spark, and Export writes them to a file.
+function awaitTone(ms = 2500) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { state.toneWaiter = null; resolve(null); }, ms);
+    state.toneWaiter = (tone) => { clearTimeout(timer); state.toneWaiter = null; resolve(tone); };
+  });
+}
+
+async function copyAmpPresets() {
+  if (!state.connected) return;
+  const from = state.ampName ?? "amp";
+  ui.copyPresets.disabled = true;
+  let copied = 0;
+  for (let n = 1; n <= AMP_SLOTS; n++) {
+    send(changeHardwarePreset(n, nextMsgNum()), `preset ${n}`);
+    state.lastToneRequest = 0; // this walk asks for every preset in turn
+    const arriving = awaitTone();
+    requestTone(`read preset ${n}`);
+    const tone = await arriving;
+    if (!tone) { log(`preset ${n}: no answer – skipped`); continue; }
+    const { presetNumber, ...rest } = tone;
+    state.tones.push({
+      ...structuredClone(rest),
+      uuid: crypto.randomUUID().toUpperCase(),
+      description: `${from} preset ${n}`,
+    });
+    copied++;
+    log(`copied preset ${n}: "${tone.name}"`);
+  }
+  ui.copyPresets.disabled = false;
+  if (!copied) { showHint("Couldn't read the amp's presets – try again once it's settled."); return; }
+  if (!library.save(state.tones)) showHint("Saved for this session only – browser storage is unavailable.");
+  state.bank = library.bankCount(state.tones) - 1;
+  state.preRandom = null;
+  render();
+  showHint(`Copied ${copied} preset(s) from ${from} into My tones. They now play on any Spark amp.`);
 }
 
 function confirmSlot(n) {
@@ -508,6 +568,7 @@ function onNotification(event) {
         const tone = decodePreset(info.data);
         log(`← tone "${tone.name}"`);
         setTone(tone);
+        state.toneWaiter?.(tone);
       } catch (err) {
         log(`tone decode failed (${err.message}) – asking again`);
         setTimeout(() => requestTone("get tone (retry)"), 600);
@@ -525,6 +586,8 @@ function onNotification(event) {
       log(`← ack ${msg.subCmd.toString(16)}`);
       if (msg.subCmd === 0x01) activateSentTone();
       if (msg.subCmd === 0x38 || msg.subCmd === 0x01) confirmSlot(state.pendingSlot);
+    } else if (info?.type === "ampName") {
+      setAmpModel(info.name);
     } else if (msg.cmd === 0x05 && msg.subCmd === 0x01) {
       noteChunkAck(); // one chunk of a tone accepted
       log(`← chunk ok${state.pendingTone ? ` (${state.pendingTone.acked}/${state.pendingTone.chunks})` : ""}`);
@@ -552,6 +615,7 @@ async function openGatt() {
   log("connected");
   render();
   requestWakeLock();
+  send(getAmpName(nextMsgNum()), "get amp name");
   send(getCurrentPresetNumber(nextMsgNum()), "get preset");
   requestTone();
 }
@@ -680,6 +744,8 @@ ui.saveTone.addEventListener("click", () => {
   state.preRandom = null;
   render();
 });
+
+ui.copyPresets.addEventListener("click", copyAmpPresets);
 
 ui.importFile.addEventListener("change", async () => {
   const files = [...ui.importFile.files];

@@ -76,6 +76,16 @@ export const changeHardwarePreset = (presetNumber, msgNum) =>
 
 export const getCurrentPresetNumber = (msgNum) => buildMessage(0x02, 0x10, [], msgNum);
 
+// The amp answers with its model name ("Spark 40", "Spark MINI", "Spark 2", …).
+// It decides how big a single BLE write may be — see BLE_WRITE_SIZE.
+export const getAmpName = (msgNum) => buildMessage(0x02, 0x11, [], msgNum);
+
+// Ignitron sets these per amp (SparkDataControl::setAmpParameters). The block format is
+// the same everywhere; what differs is how much of a block may go out in one BLE write.
+// A Spark MINI or Spark 2 given a 173-byte write silently loses the rest of the tone.
+export const BLE_WRITE_SIZE = { "Spark MINI": 0x64, "Spark 2": 0x64 };
+export const DEFAULT_BLE_WRITE_SIZE = 0xad; // Spark 40, GO, NEO
+
 // Incremental parser for notifications from the amp (FFC2).
 // Call push() with each notification; it returns decoded messages.
 export class SparkReader {
@@ -166,6 +176,11 @@ export function describe(msg) {
     return { type: "preset", preset: index !== undefined && index < 4 ? index + 1 : null };
   }
   if ((cmd === 0x01 || cmd === 0x03) && subCmd === 0x01) return { type: "tone", data };
+  if (cmd === 0x03 && subCmd === 0x11) {
+    // payload: unknown byte, 0xa0 + length, then the name
+    const length = (data[1] ?? 0xa0) - 0xa0;
+    return { type: "ampName", name: String.fromCharCode(...data.slice(2, 2 + length)) };
+  }
   if (cmd === 0x04) return { type: "ack", subCmd };
   return null;
 }
