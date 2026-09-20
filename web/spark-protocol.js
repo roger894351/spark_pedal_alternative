@@ -80,11 +80,17 @@ export const getCurrentPresetNumber = (msgNum) => buildMessage(0x02, 0x10, [], m
 // It decides how big a single BLE write may be — see BLE_WRITE_SIZE.
 export const getAmpName = (msgNum) => buildMessage(0x02, 0x11, [], msgNum);
 
-// Ignitron sets these per amp (SparkDataControl::setAmpParameters). The block format is
-// the same everywhere; what differs is how much of a block may go out in one BLE write.
-// A Spark MINI or Spark 2 given a 173-byte write silently loses the rest of the tone.
+// How much of a block may go out in one BLE write. The block format is the same on every
+// Spark; only the write size differs.
+//
+// Ignitron uses 0xAD for a Spark 40 and 0x64 for a MINI or Spark 2, but it talks to the amp
+// through NimBLE, which splits a write across packets itself. Web Bluetooth does not: a
+// write longer than the negotiated MTU is either refused outright ("GATT operation failed
+// for unknown reason") or turned into a long write the amp won't answer. 0x64 is the
+// largest size observed working, so every amp gets it.
 export const BLE_WRITE_SIZE = { "Spark MINI": 0x64, "Spark 2": 0x64 };
-export const DEFAULT_BLE_WRITE_SIZE = 0xad; // Spark 40, GO, NEO
+export const DEFAULT_BLE_WRITE_SIZE = 0x64;
+export const IGNITRON_BLOCK_SIZE = 0xad; // what a Spark 40 accepts over NimBLE, for reference
 
 // Incremental parser for notifications from the amp (FFC2).
 // Call push() with each notification; it returns decoded messages.

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildMessage, changeHardwarePreset, getCurrentPresetNumber,
   to7Bit, from7Bit, SparkReader, describe, hex,
-  getAmpName, BLE_WRITE_SIZE, DEFAULT_BLE_WRITE_SIZE,
+  getAmpName, BLE_WRITE_SIZE, DEFAULT_BLE_WRITE_SIZE, IGNITRON_BLOCK_SIZE,
 } from "../web/spark-protocol.js";
 
 const HEADER = "01 FE 00 00 53 FE 1A 00 00 00 00 00 00 00 00 00";
@@ -77,12 +77,14 @@ test("the amp is asked which model it is, and answers with its name", () => {
   assert.deepEqual(describe({ cmd: 0x03, subCmd: 0x11, data }), { type: "ampName", name });
 });
 
-test("a Spark MINI takes smaller BLE writes than a Spark 40", () => {
-  // Ignitron's SparkDataControl::setAmpParameters: MINI and Spark 2 cap writes at 0x64.
-  // A 0xAD block written whole to a MINI loses its tail and the tone never completes.
+test("no amp is written to in pieces larger than the MTU can carry", () => {
+  // Web Bluetooth refuses a write longer than the negotiated MTU, which is what made
+  // tones fail on a Spark 40 with "GATT operation failed for unknown reason" even though
+  // Ignitron writes 0xAD blocks to the same amp over NimBLE.
   assert.equal(BLE_WRITE_SIZE["Spark MINI"], 0x64);
   assert.equal(BLE_WRITE_SIZE["Spark 2"], 0x64);
-  assert.equal(BLE_WRITE_SIZE["Spark 40"] ?? DEFAULT_BLE_WRITE_SIZE, 0xad);
+  assert.equal(BLE_WRITE_SIZE["Spark 40"] ?? DEFAULT_BLE_WRITE_SIZE, 0x64);
+  assert.ok(DEFAULT_BLE_WRITE_SIZE < IGNITRON_BLOCK_SIZE);
 
   // Every block still splits into whole writes with nothing left over.
   const blocks = buildMessage(0x01, 0x01, new Array(400).fill(0x42), 1);

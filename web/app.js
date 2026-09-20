@@ -2,18 +2,18 @@ import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, getAmpName, SparkReader, describe, hex,
   BLE_WRITE_SIZE, DEFAULT_BLE_WRITE_SIZE,
-} from "./spark-protocol.js?v=16";
+} from "./spark-protocol.js?v=17";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   decodeEffectParameter, decodeEffectOnOff, decodeEffectSwap,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=16";
-import * as library from "./library.js?v=16";
-import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=16";
-import { randomTone, MIN_MASTER } from "./random-tone.js?v=16";
-import { runSelfTest, verdict } from "./selftest.js?v=16";
+} from "./spark-preset.js?v=17";
+import * as library from "./library.js?v=17";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=17";
+import { randomTone, MIN_MASTER } from "./random-tone.js?v=17";
+import { runSelfTest, verdict } from "./selftest.js?v=17";
 
-const APP_VERSION = "v16";
+const APP_VERSION = "v17";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -144,7 +144,10 @@ function send(blocks, label, { paced = blocks.length > 1 } = {}) {
       if (paced && i < blocks.length - 1) await sleep(BLOCK_GAP_MS);
     }
     if (blocks.length > 2) log(`→ ${label}: ${blocks.length} blocks, ${blocks.chunks} chunks`);
-  }).catch((err) => log(`write failed: ${err.message}`));
+  }).catch((err) => {
+    log(`write failed: ${err.message}`);
+    if (state.pendingTone) state.pendingTone.writeFailed = true;
+  });
   return writeQueue;
 }
 
@@ -193,6 +196,25 @@ function echoArrived(key, value) {
   state.pendingEdits.delete(key);
   rowFor(key)?.classList.remove("unconfirmed");
   return open;
+}
+
+// A Spark 40 confirms an edit with a plain ack (04 04 for a knob, 04 15 for an effect
+// switch, 04 06 for a model swap) where a MINI echoes the whole change back (03 37, 03 15,
+// 03 06). An ack carries no effect name, so it clears the oldest outstanding edit of its
+// kind — edits go out one at a time, so that is the one it belongs to.
+const ACK_CONFIRMS = { 0x04: "param:", 0x15: "onoff:", 0x06: "model:" };
+
+function ackConfirms(subCmd) {
+  const prefix = ACK_CONFIRMS[subCmd];
+  if (!prefix) return;
+  for (const [key, open] of state.pendingEdits) {
+    if (!key.startsWith(prefix)) continue;
+    clearTimeout(open.timer);
+    state.pendingEdits.delete(key);
+    rowFor(key)?.classList.remove("unconfirmed");
+    state.echoWaiters.get(key)?.(open.sent);
+    return;
+  }
 }
 
 // For the self-test: send, then wait for the amp's echo of that exact change.
@@ -323,8 +345,12 @@ function toneTimedOut() {
     sendTone(pending.tone, `${pending.label} (resend)`, pending.tries + 1);
     return;
   }
-  log("amp never confirmed the tone – playing it anyway");
-  send(changeHardwarePreset(TEMP_PRESET, nextMsgNum()), "play sent tone");
+  // Selecting the temp slot now would play whatever fragment the amp kept. Leave the amp
+  // on the tone it already has and say so.
+  log(`${pending.label}: gave up – the amp never got the whole tone, so it was not played`);
+  showHint(pending.writeFailed
+    ? "Bluetooth refused a write. Move closer to the amp, or reconnect, and try again."
+    : "The tone didn't reach the amp in one piece, so it wasn't played. Try again.");
 }
 
 function sendRandomTone() {
@@ -840,6 +866,7 @@ function onNotification(event) {
     } else if (info?.type === "ack") {
       log(`← ack ${msg.subCmd.toString(16)}`);
       settleAck(msg.subCmd);
+      ackConfirms(msg.subCmd);
       if (msg.subCmd === 0x01) activateSentTone();
       if (msg.subCmd === 0x38 || msg.subCmd === 0x01) confirmSlot(state.pendingSlot);
     } else if (info?.type === "paramChanged") {
