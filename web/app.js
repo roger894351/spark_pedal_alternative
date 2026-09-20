@@ -2,18 +2,18 @@ import {
   SPARK_SERVICE, SPARK_WRITE_CHAR, SPARK_NOTIFY_CHAR,
   changeHardwarePreset, getCurrentPresetNumber, getAmpName, SparkReader, describe, hex,
   BLE_WRITE_SIZE, DEFAULT_BLE_WRITE_SIZE,
-} from "./spark-protocol.js?v=17";
+} from "./spark-protocol.js?v=18";
 import {
   encodePreset, decodePreset, getCurrentPreset, changeEffectParameter, turnEffectOnOff, changeEffect,
   decodeEffectParameter, decodeEffectOnOff, decodeEffectSwap,
   AMP_PARAM, AMP_SLOT, SLOT_LABELS,
-} from "./spark-preset.js?v=17";
-import * as library from "./library.js?v=17";
-import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=17";
-import { randomTone, MIN_MASTER } from "./random-tone.js?v=17";
-import { runSelfTest, verdict } from "./selftest.js?v=17";
+} from "./spark-preset.js?v=18";
+import * as library from "./library.js?v=18";
+import { FX_BY_SLOT, fxInfo, paramLabel, displayName } from "./fx-catalog.js?v=18";
+import { randomTone, MIN_MASTER } from "./random-tone.js?v=18";
+import { runSelfTest, verdict } from "./selftest.js?v=18";
 
-const APP_VERSION = "v17";
+const APP_VERSION = "v18";
 const ACK_TIMEOUT_MS = 700;
 const RECONNECT_DELAYS_MS = [500, 1500, 4000];
 const SLIDER_SEND_MS = 60; // don't flood the BLE connection while dragging
@@ -29,6 +29,11 @@ const KEYMAP = {
   Digit7: { slot: 7 }, Numpad7: { slot: 7 },
   Digit8: { slot: 8 }, Numpad8: { slot: 8 },
   KeyR: { random: true },
+  Space: { compare: true },
+  // One keyboard row, one pedal each, in signal order: gate, comp, drive, amp, mod, delay, reverb.
+  KeyA: { fx: 0 }, KeyS: { fx: 1 }, KeyD: { fx: 2 }, KeyF: { fx: 3 },
+  KeyG: { fx: 4 }, KeyH: { fx: 5 }, KeyJ: { fx: 6 },
+  Slash: { help: true }, Escape: { help: false },
   ArrowLeft: { step: -1 }, ArrowUp: { step: -1 }, PageUp: { step: -1 },
   ArrowRight: { step: 1 }, ArrowDown: { step: 1 }, PageDown: { step: 1 },
   BracketLeft: { bank: -1 }, BracketRight: { bank: 1 },
@@ -61,6 +66,7 @@ const ui = {
   includePaid: $("include-paid"),
   log: $("log"), copyLog: $("copy-log"), version: $("version"),
   update: $("update"), updateNow: $("update-now"),
+  keymap: $("keymap"), expandAll: $("expand-all"),
 };
 
 const state = {
@@ -76,7 +82,7 @@ const state = {
   ampName: null, bleWriteSize: DEFAULT_BLE_WRITE_SIZE, toneWaiter: null,
   ackWaiters: [], ampNameWaiter: null, testing: false,
   pendingEdits: new Map(), echoWaiters: new Map(), adoptTimer: null, decodeRetries: 0,
-  inspecting: false,
+  inspecting: false, compareWith: null, missing: new Set(),
   openSlots: new Set(),
 };
 
@@ -105,7 +111,9 @@ function setAmpModel(name) {
   if (!name) return;
   state.ampName = name;
   state.bleWriteSize = BLE_WRITE_SIZE[name] ?? DEFAULT_BLE_WRITE_SIZE;
-  log(`← amp: ${name} (${state.bleWriteSize} bytes per write)`);
+  state.missing = new Set(loadMissing()[name] ?? []);
+  log(`← amp: ${name} (${state.bleWriteSize} bytes per write)`
+    + (state.missing.size ? `, no ${[...state.missing].join(", ")}` : ""));
   if (state.connected) setStatus("connected", `Connected: ${name}`);
 }
 
@@ -149,6 +157,31 @@ function send(blocks, label, { paced = blocks.length > 1 } = {}) {
     if (state.pendingTone) state.pendingTone.writeFailed = true;
   });
   return writeQueue;
+}
+
+// ---------- gear this amp doesn't have ----------
+//
+// The catalog is the union of every Spark's models, so a random tone can name something
+// this amp never shipped. The amp accepts the tone, loads different gear, and then ignores
+// every edit addressed to the model we asked for. Once seen, stop offering it on this amp.
+
+const MISSING_KEY = "spark-switch-missing";
+
+const loadMissing = () => {
+  try { return JSON.parse(localStorage.getItem(MISSING_KEY) ?? "{}"); } catch { return {}; }
+};
+
+function rememberMissing(names) {
+  if (!state.ampName || !names.length) return;
+  const all = loadMissing();
+  const known = new Set(all[state.ampName] ?? []);
+  const fresh = names.filter((n) => !known.has(n));
+  if (!fresh.length) return;
+  fresh.forEach((n) => known.add(n));
+  all[state.ampName] = [...known];
+  try { localStorage.setItem(MISSING_KEY, JSON.stringify(all)); } catch { /* private mode */ }
+  state.missing = known;
+  log(`remembering that ${state.ampName} has no ${fresh.join(", ")} – random tones will skip it`);
 }
 
 // ---------- verify what we send ----------
@@ -320,8 +353,7 @@ function checkWhatLoaded() {
       .filter(Boolean);
     if (missing.length) {
       log(`⚠ this amp has no ${missing.join(", ")} – editing what it loaded instead`);
-      showHint(`${state.ampName ?? "This amp"} doesn't have ${missing.join(", ")}.`
-        + " It substituted its own gear, and the sliders now follow that.");
+      rememberMissing(missing);
     }
     setTone(loaded); // what the amp has is what we edit
   }, 700);
@@ -361,7 +393,8 @@ function sendRandomTone() {
   // Keep the first real tone, so Undo goes back to it however many randoms you audition.
   if (!state.preRandom) state.preRandom = state.tone ? structuredClone(state.tone) : null;
   const before = state.tone?.pedals?.[AMP_SLOT]?.parameters?.[AMP_PARAM.master];
-  const tone = randomTone(state.tone, ++state.randomCount, { includePaid: ui.includePaid.checked });
+  const tone = randomTone(state.tone, ++state.randomCount,
+    { includePaid: ui.includePaid.checked, exclude: state.missing });
   if (before !== undefined && before < MIN_MASTER) {
     log(`volume was ${Math.round(before * 100)}% – raised to ${Math.round(MIN_MASTER * 100)}% so the random tone is audible`);
   }
@@ -562,6 +595,9 @@ function requestTone(reason = "get tone") {
 }
 
 function setTone(tone, { keepBaseline = false } = {}) {
+  if (!keepBaseline && state.tone && state.tone.name !== tone.name) {
+    state.compareWith = structuredClone(state.tone); // Space flips back to what was playing
+  }
   state.tone = tone;
   if (!keepBaseline) state.baseline = structuredClone(tone);
   renderTone();
@@ -580,9 +616,20 @@ function revertTone() {
   const base = state.baseline;
   const tone = state.tone;
   if (!base || !tone) return;
+  const changes = sendDifferences(tone, base);
+  state.tone = structuredClone(base);
+  renderTone();
+  log(changes ? `reverted ${changes} change(s)` : "nothing to revert");
+}
+
+// Move the amp from one tone to another by sending only what actually differs. Much faster
+// than a whole tone (single-block commands, no chunking) and it keeps the amp on the preset
+// it is already playing, which is what makes an instant A/B possible.
+function sendDifferences(from, to) {
   let changes = 0;
-  base.pedals.forEach((basePedal, i) => {
-    const pedal = tone.pedals[i];
+  to.pedals.forEach((basePedal, i) => {
+    const pedal = from.pedals[i];
+    if (!pedal) return;
     if (pedal.name !== basePedal.name) {
       send(changeEffect(pedal.name, basePedal.name, nextMsgNum()), `${SLOT_LABELS[i]} → ${basePedal.name}`);
       changes++;
@@ -598,9 +645,21 @@ function revertTone() {
       changes++;
     }
   });
-  state.tone = structuredClone(base);
+  return changes;
+}
+
+// A/B: flip between the tone playing now and the one before it, as many times as you like.
+// Auditioning a random tone is guesswork without this — you cannot hold a sound in your head
+// long enough to compare it to the one it replaced.
+function toggleCompare() {
+  const other = state.compareWith ?? state.baseline;
+  if (!state.tone || !other) return;
+  const leaving = structuredClone(state.tone);
+  const changes = sendDifferences(state.tone, other);
+  state.compareWith = leaving;
+  state.tone = structuredClone(other);
   renderTone();
-  log(changes ? `reverted ${changes} change(s)` : "nothing to revert");
+  log(changes ? `A/B → "${other.name}" (${changes} change(s))` : `A/B → "${other.name}" – identical`);
 }
 
 function swapEffect(slotIndex, newName) {
@@ -716,6 +775,8 @@ function render() {
 }
 
 function renderTone() {
+  const slots = state.tone?.pedals?.length ?? 0;
+  ui.expandAll.textContent = slots && state.openSlots.size === slots ? "Collapse all" : "Expand all";
   const tone = state.tone;
   ui.tonePanel.hidden = !tone;
   if (!tone) return;
@@ -997,14 +1058,19 @@ document.addEventListener("keydown", (e) => {
   const action = KEYMAP[e.code];
   if (!action || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.target.matches?.("input, textarea")) return;
+  // Space still works the way the browser means it on something focused.
+  if (e.code === "Space" && e.target.matches?.("button, select, summary, a, details")) return;
   e.preventDefault();
   if (e.repeat && !action.volume) return;
+  if (action.help !== undefined) { ui.keymap.hidden = action.help ? ui.keymap.hidden === false : true; return; }
   if (action.slot) selectSlot(action.slot);
   else if (action.step) stepSlot(action.step);
   else if (action.bank) stepBank(action.bank);
   else if (action.volume) nudgeVolume(action.volume);
   else if (action.revert) revertTone();
   else if (action.random) sendRandomTone();
+  else if (action.compare) toggleCompare();
+  else if (action.fx !== undefined) toggleEffect(action.fx);
 });
 
 ui.connect.addEventListener("click", () => {
@@ -1051,6 +1117,13 @@ ui.saveTone.addEventListener("click", () => {
 
 ui.copyPresets.addEventListener("click", copyAmpPresets);
 ui.selfTest.addEventListener("click", selfTest);
+
+ui.expandAll.addEventListener("click", () => {
+  const all = state.tone?.pedals?.length ?? 0;
+  if (state.openSlots.size === all) state.openSlots.clear();
+  else for (let i = 0; i < all; i++) state.openSlots.add(i);
+  renderTone();
+});
 
 ui.importFile.addEventListener("change", async () => {
   const files = [...ui.importFile.files];

@@ -52,3 +52,18 @@ test("a random tone is never left inaudible", () => {
   loud.pedals[AMP_SLOT].parameters[AMP_PARAM.master] = 0.72;
   assert.equal(randomTone(loud, 1).pedals[AMP_SLOT].parameters[AMP_PARAM.master], 0.72);
 });
+
+test("gear this amp doesn't have is never offered again", () => {
+  // The catalog is the union of every Spark's models, so a random tone can name something
+  // the connected amp never shipped. Once the amp has shown it substitutes that model,
+  // it has to stop appearing or the same unplayable tone keeps coming back.
+  const exclude = new Set(["SABDriver"]);
+  for (let i = 0; i < 200; i++) {
+    const tone = randomTone(BASE, i, { exclude });
+    assert.ok(!tone.pedals.some((p) => exclude.has(p.name)), `run ${i} used excluded gear`);
+  }
+  // Excluding one model must not empty a slot: something else still gets picked.
+  const drives = new Set();
+  for (let i = 0; i < 200; i++) drives.add(randomTone(BASE, i, { exclude }).pedals[2].name);
+  assert.ok(drives.size > 1, "the drive slot should still have choices");
+});

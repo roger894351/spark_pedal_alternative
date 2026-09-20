@@ -24,11 +24,15 @@ const SLOT_RULES = [
   { chance: 0.75, min: 0.15, max: 0.5 }, // 6 reverb
 ];
 
-export function randomTone(baseTone, counter = 1, { includePaid = true } = {}) {
+// `exclude` holds technical names this amp turned out not to have. The catalog is the union
+// of every Spark's gear, so without it a random tone can name a model the amp never shipped:
+// the amp loads something else and then ignores every edit addressed to what we asked for.
+export function randomTone(baseTone, counter = 1, { includePaid = true, exclude = new Set() } = {}) {
   const pedals = [];
   for (let slot = 0; slot < PEDAL_COUNT; slot++) {
     const rule = SLOT_RULES[slot];
-    const options = (FX_BY_SLOT[slot] ?? []).filter((fx) => includePaid || !isPaid(fx));
+    const options = (FX_BY_SLOT[slot] ?? [])
+      .filter((fx) => (includePaid || !isPaid(fx)) && !exclude.has(fx.tech));
     const choice = options.length ? pick(options) : null;
     const name = choice?.tech ?? baseTone?.pedals?.[slot]?.name ?? "";
     const info = fxInfo(name);

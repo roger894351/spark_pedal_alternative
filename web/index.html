@@ -95,7 +95,29 @@
     .slider.volume.low input { accent-color: #ff6b6b; }
     .slider input { width: 100%; accent-color: var(--accent); }
     .slider output { text-align: right; font: 12px ui-monospace, Menlo, monospace; color: var(--text); }
-    #effects { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+    .chain-head {
+      display: flex; justify-content: space-between; align-items: baseline;
+      margin: 16px 0 6px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+      color: var(--muted);
+    }
+    #effects { display: grid; gap: 6px; align-items: start; }
+    /* On a laptop there is room for the whole chain at once, two abreast. */
+    @media (min-width: 700px) { #effects { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    #keymap {
+      border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: var(--panel);
+    }
+    #keymap h2 { font-size: 15px; margin: 0 0 10px; display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+    #keymap h2 span { font-size: 12px; font-weight: 400; color: var(--muted); }
+    #keymap h3 { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 16px 0 8px; font-weight: 600; }
+    #keymap dl { display: grid; gap: 6px 18px; margin: 0; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); }
+    #keymap dl.pedals { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+    #keymap dl div { display: flex; gap: 10px; align-items: baseline; font-size: 13px; }
+    #keymap dt { min-width: 62px; }
+    #keymap dd { margin: 0; color: var(--muted); }
+    #keymap kbd {
+      font: 12px ui-monospace, Menlo, monospace; padding: 2px 6px;
+      border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; color: var(--text);
+    }
     .fx-slot { border: 1px solid var(--line); border-radius: 10px; font-size: 13px; color: var(--text); }
     .fx-slot summary {
       display: flex; align-items: center; gap: 10px; padding: 8px 10px; list-style: none;
@@ -236,6 +258,10 @@
         <button id="revert" class="link" type="button" hidden>↺ Undo my changes</button>
       </h2>
       <div id="sliders"></div>
+      <div class="chain-head">
+        <span>Signal chain</span>
+        <button id="expand-all" class="link" type="button">Expand all</button>
+      </div>
       <div id="effects"></div>
     </section>
 
@@ -252,12 +278,33 @@
         🎲 Random may use Hendrix (J.H.) gear – only if you bought that pack</label>
     </details>
 
+    <div id="keymap" hidden>
+      <h2>Keys <span>press <kbd>?</kbd> to hide</span></h2>
+      <dl>
+        <div><dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>the amp's own presets</dd></div>
+        <div><dt><kbd>5</kbd>–<kbd>8</kbd></dt><dd>my tones, this bank</dd></div>
+        <div><dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>previous / next bank</dd></div>
+        <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>step through all 8 slots</dd></div>
+        <div><dt><kbd>R</kbd></dt><dd>random tone</dd></div>
+        <div><dt><kbd>Space</kbd></dt><dd>A/B against the previous tone</dd></div>
+        <div><dt><kbd>0</kbd></dt><dd>undo my changes</dd></div>
+        <div><dt><kbd>-</kbd> <kbd>=</kbd></dt><dd>volume down / up</dd></div>
+      </dl>
+      <h3>Pedals — one key each, in signal order</h3>
+      <dl class="pedals">
+        <div><dt><kbd>A</kbd></dt><dd>noise gate</dd></div>
+        <div><dt><kbd>S</kbd></dt><dd>compressor</dd></div>
+        <div><dt><kbd>D</kbd></dt><dd>drive</dd></div>
+        <div><dt><kbd>F</kbd></dt><dd>amp</dd></div>
+        <div><dt><kbd>G</kbd></dt><dd>modulation</dd></div>
+        <div><dt><kbd>H</kbd></dt><dd>delay</dd></div>
+        <div><dt><kbd>J</kbd></dt><dd>reverb</dd></div>
+      </dl>
+    </div>
+
     <p class="help">
-      Keyboard: <kbd>1</kbd>–<kbd>4</kbd> amp presets · <kbd>5</kbd>–<kbd>8</kbd> my tones ·
-      <kbd>R</kbd> random tone ·
-      <kbd>←</kbd>/<kbd>↑</kbd>/<kbd>PgUp</kbd> previous ·
-      <kbd>→</kbd>/<kbd>↓</kbd>/<kbd>PgDn</kbd> next ·
-      <kbd>[</kbd>/<kbd>]</kbd> bank · <kbd>-</kbd>/<kbd>=</kbd> volume · <kbd>0</kbd> undo changes.
+      <kbd>1</kbd>–<kbd>8</kbd> slots · <kbd>R</kbd> random · <kbd>Space</kbd> A/B ·
+      <kbd>A</kbd>–<kbd>J</kbd> pedals · <kbd>0</kbd> undo · press <kbd>?</kbd> for all keys.
       Close the official Spark app first – and this page on any other device (e.g. your Mac) –
       the amp allows only one control connection.
     </p>
@@ -272,6 +319,6 @@
       <pre id="log"></pre>
     </details>
   </main>
-  <script type="module" src="app.js?v=17"></script>
+  <script type="module" src="app.js?v=18"></script>
 </body>
 </html>
